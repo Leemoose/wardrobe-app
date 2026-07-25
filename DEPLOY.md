@@ -7,8 +7,15 @@ and redeploys itself when `main` moves.
 
 | | |
 |---|---|
-| LAN | http://192.168.0.58:8321 |
-| Tailscale | http://100.79.52.22:8321 |
+| **Preferred** (real TLS, from anywhere on the tailnet) | https://leemooseserver.tail3795d8.ts.net:9443 |
+| LAN, no Tailscale needed | http://192.168.0.58:8321 |
+
+The HTTPS address is served by `tailscale serve` with a genuine Let's Encrypt
+certificate. Prefer it — Safari upgrades bare `http://` addresses to `https://`,
+which fails on the plain LAN URL.
+
+Add the app to the iPhone Home Screen from the **HTTPS** address: a PWA is bound
+to its origin, so one added from the `http://` URL stays on that origin.
 
 ## How auto-deploy works
 
