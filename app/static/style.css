@@ -35,6 +35,10 @@
     --tab-bar-height: 72px;
     --max-width: 600px;
     --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    /* The status bar / Dynamic Island. Needed because index.html sets
+       apple-mobile-web-app-status-bar-style=black-translucent, which draws
+       page content underneath them. */
+    --safe-area-top: env(safe-area-inset-top, 0px);
 }
 
 * {
@@ -69,6 +73,7 @@ html, body {
 #main-content {
     flex: 1;
     padding: var(--space-md);
+    padding-top: calc(var(--space-md) + var(--safe-area-top));
     padding-bottom: calc(var(--tab-bar-height) + var(--safe-area-bottom) + var(--space-md));
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
@@ -725,8 +730,16 @@ html, body {
 
 .modal.full {
     max-height: 100vh;
+    /* dvh accounts for iOS browser chrome; vh above is the fallback. */
+    max-height: 100dvh;
     height: 100%;
     border-radius: 0;
+}
+
+/* A full-screen modal starts at y=0, which on iPhone sits behind the status
+   bar and Dynamic Island. Without this the close button is unreachable. */
+.modal.full .modal-header {
+    padding-top: calc(var(--space-md) + var(--safe-area-top));
 }
 
 .modal-header {
@@ -766,6 +779,8 @@ html, body {
 
 .modal-footer {
     padding: var(--space-md);
+    /* Modals are bottom-anchored, so the footer lands on the home indicator. */
+    padding-bottom: calc(var(--space-md) + var(--safe-area-bottom));
     border-top: 1px solid var(--border);
     display: flex;
     gap: var(--space-sm);
