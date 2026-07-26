@@ -240,12 +240,16 @@ def get_outfit_collage(outfit_id: int):
     """
     Get or generate a collage image from outfit member cover photos.
 
-    Canvas: 600x750px, background #1a1d24
+    Canvas: 600x400px, background #1a1d24
     Grid layouts:
-    - 1 photo: 1x1 centered
-    - 2 photos: 1x2 stacked
-    - 3-4 photos: 2x2 grid
-    - 5-6 photos: 2x3 grid
+    - 1 photo: centered
+    - 2 photos: 2 across
+    - 3 photos: 3 across
+    - 4 photos: 2x2 grid
+    - 5-6 photos: 3x2 grid
+
+    Landscape because the card preview renders this into a wide, short box; a
+    portrait canvas there gets almost entirely cropped away by object-fit.
 
     Uses 12px gutters. Serves cached collage if available.
     Returns 404 if no member photos exist.
@@ -293,7 +297,7 @@ def get_outfit_collage(outfit_id: int):
 
         # Create collage canvas
         canvas_width = 600
-        canvas_height = 750
+        canvas_height = 400
         gutter = 12
         bg_color = (26, 29, 36)  # #1a1d24
 
@@ -301,54 +305,30 @@ def get_outfit_collage(outfit_id: int):
 
         n = len(photos)
 
+        # Grid shape by photo count. A landscape canvas means laying pieces out
+        # side by side rather than stacking them.
         if n == 1:
-            # 1 photo: centered, fill canvas minus margins
-            cell_w = canvas_width - 2 * gutter
-            cell_h = canvas_height - 2 * gutter
-            img = photos[0]
-            img.thumbnail((cell_w, cell_h))
-            x = gutter + (cell_w - img.width) // 2
-            y = gutter + (cell_h - img.height) // 2
-            canvas.paste(img, (x, y))
-
+            cols, rows = 1, 1
         elif n == 2:
-            # 2 photos: 1x2 stacked
-            cell_w = canvas_width - 2 * gutter
-            cell_h = (canvas_height - 3 * gutter) // 2
-            for i, img in enumerate(photos):
-                img = img.copy()
-                img.thumbnail((cell_w, cell_h))
-                x = gutter + (cell_w - img.width) // 2
-                y = gutter + i * (cell_h + gutter) + (cell_h - img.height) // 2
-                canvas.paste(img, (x, y))
-
-        elif n <= 4:
-            # 3-4 photos: 2x2 grid
+            cols, rows = 2, 1
+        elif n == 3:
+            cols, rows = 3, 1
+        elif n == 4:
             cols, rows = 2, 2
-            cell_w = (canvas_width - (cols + 1) * gutter) // cols
-            cell_h = (canvas_height - (rows + 1) * gutter) // rows
-            for i, img in enumerate(photos[:4]):
-                img = img.copy()
-                img.thumbnail((cell_w, cell_h))
-                col = i % cols
-                row = i // cols
-                x = gutter + col * (cell_w + gutter) + (cell_w - img.width) // 2
-                y = gutter + row * (cell_h + gutter) + (cell_h - img.height) // 2
-                canvas.paste(img, (x, y))
-
         else:
-            # 5-6 photos: 2x3 grid
-            cols, rows = 2, 3
-            cell_w = (canvas_width - (cols + 1) * gutter) // cols
-            cell_h = (canvas_height - (rows + 1) * gutter) // rows
-            for i, img in enumerate(photos[:6]):
-                img = img.copy()
-                img.thumbnail((cell_w, cell_h))
-                col = i % cols
-                row = i // cols
-                x = gutter + col * (cell_w + gutter) + (cell_w - img.width) // 2
-                y = gutter + row * (cell_h + gutter) + (cell_h - img.height) // 2
-                canvas.paste(img, (x, y))
+            cols, rows = 3, 2
+
+        cell_w = (canvas_width - (cols + 1) * gutter) // cols
+        cell_h = (canvas_height - (rows + 1) * gutter) // rows
+
+        for i, img in enumerate(photos[: cols * rows]):
+            img = img.copy()
+            img.thumbnail((cell_w, cell_h))
+            col = i % cols
+            row = i // cols
+            x = gutter + col * (cell_w + gutter) + (cell_w - img.width) // 2
+            y = gutter + row * (cell_h + gutter) + (cell_h - img.height) // 2
+            canvas.paste(img, (x, y))
 
         # Save to cache
         canvas.save(cache_path, "JPEG", quality=85)

@@ -452,7 +452,11 @@ function renderOutfitCard(outfit, showWearBtn = false) {
     if (outfit.photo) {
         previewHtml = `<div class="outfit-preview"><img src="${escapeHtml(outfit.photo)}" alt="${escapeHtml(outfit.name)}" class="outfit-preview-img" loading="lazy"></div>`;
     } else if (outfit.has_collage) {
-        previewHtml = `<div class="outfit-preview"><img src="/api/outfits/${outfit.id}/collage" alt="${escapeHtml(outfit.name)}" class="outfit-preview-img" loading="lazy" onerror="this.parentElement.outerHTML='<div class=\\'outfit-thumbnails\\'>${thumbsHtml.replace(/'/g, "\\'")}</div>'"></div>`;
+        // Render the thumbnail fallback alongside the collage and swap on error.
+        // Interpolating thumbsHtml into the onerror attribute breaks the markup:
+        // it carries double quotes, which close the attribute early and spill the
+        // rest of the string into the document as raw text.
+        previewHtml = `<div class="outfit-preview"><img src="/api/outfits/${outfit.id}/collage" alt="${escapeHtml(outfit.name)}" class="outfit-preview-img" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false;"><div class="outfit-thumbnails" hidden>${thumbsHtml}</div></div>`;
     } else {
         previewHtml = `<div class="outfit-thumbnails">${thumbsHtml}</div>`;
     }

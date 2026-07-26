@@ -49,6 +49,11 @@
 
 html, body {
     height: 100%;
+    /* The app shell scrolls internally; the page itself must never scroll. On
+       iOS a scrolling page collapses and expands the browser toolbar, which
+       moves the viewport that the fixed tab bar is anchored to — so the bar
+       sits at a different height on tabs with no content. */
+    overflow: hidden;
     background: var(--bg-primary);
     color: var(--text-primary);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -59,7 +64,9 @@ html, body {
 }
 
 #app {
-    min-height: 100%;
+    /* A definite height, not min-height: the scrolling child below needs
+       something to overflow against or it just grows and takes the page with it. */
+    height: 100%;
     display: flex;
     flex-direction: column;
     max-width: var(--max-width);
@@ -72,6 +79,9 @@ html, body {
 
 #main-content {
     flex: 1;
+    /* Flex items default to min-height: auto, which floors them at content
+       height and stops overflow-y from ever engaging. */
+    min-height: 0;
     padding: var(--space-md);
     padding-top: calc(var(--space-md) + var(--safe-area-top));
     padding-bottom: calc(var(--tab-bar-height) + var(--safe-area-bottom) + var(--space-md));
@@ -2241,8 +2251,12 @@ html, body {
 
 .outfit-preview-img {
     width: 100%;
-    height: 120px;
+    /* Match the collage's 3:2 canvas. A fixed short height cropped away most of
+       the image, leaving a band sliced through the middle of the garments. */
+    aspect-ratio: 3 / 2;
+    height: auto;
     object-fit: cover;
+    display: block;
 }
 
 .outfit-modal-preview {
@@ -2251,7 +2265,7 @@ html, body {
 
 .outfit-preview-large {
     width: 100%;
-    max-height: 200px;
+    max-height: 320px;
     object-fit: contain;
     border-radius: var(--radius-md);
     cursor: pointer;
