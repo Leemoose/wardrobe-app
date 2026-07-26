@@ -7,7 +7,12 @@
 
     <!-- PWA Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- Not black-translucent. That runs the web view under the status bar but
+         iOS still subtracts the status bar from the reported viewport height,
+         so the view starts at y=0 and ends one status bar short of the screen
+         — measured on an installed PWA, a 797px viewport on an 844px screen,
+         leaving 47px at the bottom the page cannot paint into. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="Wardrobe">
     <meta name="theme-color" content="#1a1d24">
     <meta name="mobile-web-app-capable" content="yes">
@@ -93,43 +98,5 @@
 
     <script src="/app.js?v=8"></script>
 
-    <!-- TEMPORARY layout diagnostic. Remove once the tab-bar geometry is settled. -->
-    <script>
-    (function () {
-        function probeInset(side) {
-            var d = document.createElement('div');
-            d.style.cssText = 'position:fixed;visibility:hidden;height:env(safe-area-inset-' + side + ',0px)';
-            document.body.appendChild(d);
-            var v = Math.round(parseFloat(getComputedStyle(d).height)) || 0;
-            d.remove();
-            return v;
-        }
-        function render() {
-            var app = document.getElementById('app');
-            var bar = document.getElementById('tab-bar');
-            if (!app || !bar) { return setTimeout(render, 500); }
-            var a = app.getBoundingClientRect(), b = bar.getBoundingClientRect();
-            var vv = window.visualViewport;
-            var box = document.getElementById('layout-debug') || document.createElement('div');
-            box.id = 'layout-debug';
-            box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
-                'background:#b00;color:#fff;font:600 13px/1.35 ui-monospace,Menlo,monospace;' +
-                'padding:6px 8px;white-space:pre;pointer-events:none;';
-            box.textContent = [
-                'standalone=' + (window.navigator.standalone === true) + '  dpr=' + window.devicePixelRatio,
-                'screen.h=' + screen.height + '  inner.h=' + window.innerHeight + '  vv.h=' + (vv ? Math.round(vv.height) : 'n/a'),
-                'docEl.clientH=' + document.documentElement.clientHeight,
-                'inset top=' + probeInset('top') + '  bottom=' + probeInset('bottom'),
-                'app  top=' + Math.round(a.top) + ' bottom=' + Math.round(a.bottom) + ' h=' + Math.round(a.height),
-                'bar  top=' + Math.round(b.top) + ' bottom=' + Math.round(b.bottom) + ' h=' + Math.round(b.height),
-                'GAP below bar = ' + Math.round(window.innerHeight - b.bottom)
-            ].join('\n');
-            if (!box.parentNode) { document.body.appendChild(box); }
-        }
-        window.addEventListener('load', render);
-        window.addEventListener('resize', render);
-        setTimeout(render, 800);
-    })();
-    </script>
 </body>
 </html>
