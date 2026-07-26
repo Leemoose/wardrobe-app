@@ -63,9 +63,12 @@ async def create_item(request: Request):
     season_tags = json.dumps(data.get("season_tags", []))
     vibe_tags = json.dumps(data.get("vibe_tags", []))
 
-    # Materials: use provided list, or infer from name/care_notes if absent
+    # Materials: use provided list, or infer from name/care_notes if absent.
+    # Provided values are normalized so raw fibre names off a care label land on
+    # the vocabulary the UI renders from.
     if "materials" in data:
-        materials = json.dumps(data.get("materials") or [])
+        from app.db import normalize_materials
+        materials = json.dumps(normalize_materials(data.get("materials")))
     else:
         from app.db import infer_materials
         materials = json.dumps(infer_materials(name, care_notes))
@@ -163,8 +166,9 @@ async def update_item(item_id: int, request: Request):
             params.append(json.dumps(data["vibe_tags"]))
 
         if "materials" in data:
+            from app.db import normalize_materials
             updates.append("materials = ?")
-            params.append(json.dumps(data["materials"] or []))
+            params.append(json.dumps(normalize_materials(data["materials"])))
 
         if "measurements" in data:
             updates.append("measurements = ?")

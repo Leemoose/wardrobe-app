@@ -297,13 +297,30 @@ _MATERIAL_KEYWORDS = {
     "silk": "silk",
     "linen": "linen",
     "cotton": "cotton",
+    "mohair": "wool",
+    "alpaca": "wool",
     "nylon": "synthetic",
     "polyester": "synthetic",
+    "polyamide": "synthetic",
+    "elastane": "synthetic",
+    "spandex": "synthetic",
+    "lycra": "synthetic",
+    "viscose": "synthetic",
+    "rayon": "synthetic",
+    "modal": "synthetic",
+    "lyocell": "synthetic",
+    "tencel": "synthetic",
+    "acrylic": "synthetic",
+    "acetate": "synthetic",
+    "cupro": "synthetic",
     "fleece": "synthetic",
+    "synthetic": "synthetic",
     "down": "down",
     "puffer": "down",
     "velvet": "velvet",
     "corduroy": "corduroy",
+    "rubber": "rubber",
+    "metal": "metal",
 }
 
 
@@ -314,6 +331,26 @@ def infer_materials(name, care_notes=""):
     for keyword, material in _MATERIAL_KEYWORDS.items():
         if keyword in text and material not in found:
             found.append(material)
+    return found
+
+
+def normalize_materials(values):
+    """Map free-form material names onto the settings vocabulary.
+
+    Importers and API clients often supply raw fibre names straight off a care
+    label ("elastane", "pima cotton"). Stored verbatim those never match the
+    vocabulary the UI renders its checkboxes from, so the item looks like it has
+    no materials selected. Fold each value through the keyword map; drop terms
+    with no known mapping rather than storing something unselectable.
+    """
+    found = []
+    for value in values or []:
+        text = str(value).strip().lower()
+        if not text:
+            continue
+        for keyword, material in _MATERIAL_KEYWORDS.items():
+            if keyword in text and material not in found:
+                found.append(material)
     return found
 
 
@@ -470,6 +507,11 @@ def thumb_url_for(photo):
     uploaded before v1.5, until the startup backfill has run).
     """
     if not photo:
+        return photo
+    # A remotely hosted cover has no local thumbnail and never will. Deriving
+    # /photos/<basename> from it yields a path that always 404s, so serve the
+    # remote URL itself instead.
+    if photo.startswith(("http://", "https://")):
         return photo
     filename = photo.split("/")[-1]
     if os.path.exists(os.path.join(PHOTO_DIR, "thumbs", filename)):
