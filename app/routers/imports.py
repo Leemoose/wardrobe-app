@@ -213,11 +213,11 @@ async def purchase_wishlist(entry_id: int, request: Request):
     Moves the wishlist image to be the item's cover photo.
     Deletes the wishlist entry.
     """
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     number = data.get("number")
-
-    if number is None:
-        raise HTTPException(400, "number is required")
 
     with get_db() as db:
         # Get wishlist entry
@@ -229,10 +229,15 @@ async def purchase_wishlist(entry_id: int, request: Request):
         if not entry["category"]:
             raise HTTPException(400, "Wishlist entry must have a category to purchase")
 
-        # Validate number is unique
-        existing = db.execute("SELECT id FROM items WHERE number = ?", (number,)).fetchone()
-        if existing:
-            raise HTTPException(400, f"Item with number {number} already exists")
+        if number is None:
+            # Auto-assign the next free number
+            from app.db import next_item_number
+            number = next_item_number(db)
+        else:
+            # Validate number is unique
+            existing = db.execute("SELECT id FROM items WHERE number = ?", (number,)).fetchone()
+            if existing:
+                raise HTTPException(400, f"Item with number {number} already exists")
 
         # Create the item
         cursor = db.execute(

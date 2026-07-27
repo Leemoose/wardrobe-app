@@ -44,13 +44,13 @@ async def create_item(request: Request):
     """Create a new item."""
     data = await request.json()
 
-    # Required fields
+    # Required fields (number is auto-assigned when omitted)
     number = data.get("number")
     name = data.get("name")
     category = data.get("category")
 
-    if number is None or name is None or category is None:
-        raise HTTPException(400, "number, name, and category are required")
+    if name is None or category is None:
+        raise HTTPException(400, "name and category are required")
 
     # Optional fields with defaults
     brand = data.get("brand", "")
@@ -63,12 +63,23 @@ async def create_item(request: Request):
     season_tags = json.dumps(data.get("season_tags", []))
     vibe_tags = json.dumps(data.get("vibe_tags", []))
 
-    # Materials: use provided list, or infer from name/care_notes if absent.
+    # Structured fabric composition + care method. When care_notes wasn't
+    # written by hand, compose it from these so nothing needs manual typing.
+    from app.db import compose_care_notes, normalize_composition
+    composition = normalize_composition(data.get("composition"))
+    care_method = str(data.get("care_method", "")).strip()
+    if not care_notes and (composition or care_method):
+        care_notes = compose_care_notes(composition, care_method)
+
+    # Materials: explicit list > derived from composition > inferred from text.
     # Provided values are normalized so raw fibre names off a care label land on
     # the vocabulary the UI renders from.
     if "materials" in data:
         from app.db import normalize_materials
         materials = json.dumps(normalize_materials(data.get("materials")))
+    elif composition:
+        from app.db import normalize_materials
+        materials = json.dumps(normalize_materials([c["fiber"] for c in composition]))
     else:
         from app.db import infer_materials
         materials = json.dumps(infer_materials(name, care_notes))
@@ -80,17 +91,23 @@ async def create_item(request: Request):
     image_url = data.get("image_url")
 
     with get_db() as db:
-        # Check for duplicate number
-        existing = db.execute("SELECT id FROM items WHERE number = ?", (number,)).fetchone()
-        if existing:
-            raise HTTPException(409, f"Item with number {number} already exists")
+        if number is None:
+            from app.db import next_item_number
+            number = next_item_number(db)
+        else:
+            # Check for duplicate number
+            existing = db.execute("SELECT id FROM items WHERE number = ?", (number,)).fetchone()
+            if existing:
+                raise HTTPException(409, f"Item with number {number} already exists")
 
         cursor = db.execute(
             """INSERT INTO items (number, name, category, brand, color, size, price,
-               paid_price, care_notes, season_tags, vibe_tags, materials, measurements)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               paid_price, care_notes, season_tags, vibe_tags, materials, measurements,
+               composition)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (number, name, category, brand, color, size, price, paid_price,
-             care_notes, season_tags, vibe_tags, materials, measurements)
+             care_notes, season_tags, vibe_tags, materials, measurements,
+             json.dumps(composition))
         )
         item_id = cursor.lastrowid
 
@@ -173,6 +190,11 @@ async def update_item(item_id: int, request: Request):
         if "measurements" in data:
             updates.append("measurements = ?")
             params.append(json.dumps(data["measurements"] or {}))
+
+        if "composition" in data:
+            from app.db import normalize_composition
+            updates.append("composition = ?")
+            params.append(json.dumps(normalize_composition(data["composition"])))
 
         if "status" in data:
             if data["status"] not in ("clean", "dirty"):
@@ -327,6 +349,37 @@ def set_cover(item_id: int, photo_id: int):
         db.execute("UPDATE items SET photo = ? WHERE id = ?", (photo_url, item_id))
 
         # Invalidate collage cache
+        invalidate_outfit_collages(db, item_id)
+
+        row = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        return item_to_dict(row, db)
+
+
+@router.post("/items/{item_id}/photos/{photo_id}/rotate")
+async def rotate_photo(item_id: int, photo_id: int, request: Request):
+    """Rotate a photo clockwise. Body: {"degrees": 90|180|270} (default 90)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    degrees = data.get("degrees", 90)
+    if degrees not in (90, 180, 270):
+        raise HTTPException(400, "degrees must be 90, 180 or 270")
+
+    from app.images import rotate_photo_file
+
+    with get_db() as db:
+        photo = db.execute(
+            "SELECT id, filename FROM item_photos WHERE id = ? AND item_id = ?",
+            (photo_id, item_id),
+        ).fetchone()
+        if not photo:
+            raise HTTPException(404, "Photo not found")
+
+        if not rotate_photo_file(photo["filename"], degrees):
+            raise HTTPException(404, "Photo file missing on disk")
+
+        # Rotated pixels invalidate any collage built from them
         invalidate_outfit_collages(db, item_id)
 
         row = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()

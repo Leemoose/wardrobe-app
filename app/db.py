@@ -334,6 +334,52 @@ def infer_materials(name, care_notes=""):
     return found
 
 
+def next_item_number(db) -> int:
+    """Next free item number: max(number) + 1, starting at 1."""
+    row = db.execute("SELECT COALESCE(MAX(number), 0) + 1 AS n FROM items").fetchone()
+    return row["n"]
+
+
+def normalize_composition(values):
+    """Validate/normalize a composition list: [{"fiber": str, "pct": number}].
+
+    Drops malformed rows; clamps pct to 0-100; lowercases fiber names.
+    Returns [] for anything that isn't a list.
+    """
+    out = []
+    if not isinstance(values, list):
+        return out
+    for row in values:
+        if not isinstance(row, dict):
+            continue
+        fiber = str(row.get("fiber", "")).strip().lower()
+        try:
+            pct = float(row.get("pct", 0))
+        except (TypeError, ValueError):
+            continue
+        if not fiber or pct <= 0:
+            continue
+        out.append({"fiber": fiber, "pct": min(round(pct, 1), 100)})
+    return out
+
+
+def compose_care_notes(composition, care_method="", extra=""):
+    """Build a care-notes string in the closet's existing format:
+    '97% cotton, 3% elastane. Machine wash, tumble dry. <extra>'"""
+    parts = []
+    if composition:
+        fibers = ", ".join(
+            f"{int(c['pct']) if float(c['pct']).is_integer() else c['pct']}% {c['fiber']}"
+            for c in composition
+        )
+        parts.append(fibers + ".")
+    if care_method:
+        parts.append(care_method.rstrip(".") + ".")
+    if extra:
+        parts.append(extra.strip())
+    return " ".join(parts).strip()
+
+
 def normalize_materials(values):
     """Map free-form material names onto the settings vocabulary.
 
@@ -418,6 +464,10 @@ def init_db():
         #  "front_rise": "10.5", "back_rise": "15", "fit": "slim straight"}.
         # Keys are free-form so each category can hold its own relevant fields.
         _add_column(db, "items", "measurements TEXT DEFAULT '{}'", "items.measurements (v1.7)")
+
+        # Migration (v1.8): structured fabric composition, e.g.
+        # [{"fiber": "cotton", "pct": 97}, {"fiber": "elastane", "pct": 3}].
+        _add_column(db, "items", "composition TEXT DEFAULT '[]'", "items.composition (v1.8)")
 
         # Migration (v1.5): maintenance event kind + cost (repair/alteration log).
         _add_column(
@@ -557,6 +607,8 @@ def item_to_dict(row, db=None, photos_map=None):
     d["materials"] = json.loads(d.get("materials") or "[]")
     # Measurements (may be absent/None before v1.7 migration runs)
     d["measurements"] = json.loads(d.get("measurements") or "{}")
+    # Composition (may be absent/None before v1.8 migration runs)
+    d["composition"] = json.loads(d.get("composition") or "[]")
     # Small thumbnail for grid views (v1.5); falls back to full photo.
     d["photo_thumb"] = thumb_url_for(d.get("photo") or "")
     if photos_map is not None:

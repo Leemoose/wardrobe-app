@@ -44,8 +44,28 @@ const state = {
     trips: [],
     tripDetail: null,
     closetShowAll: false,
-    outfitShowAll: false
+    outfitShowAll: false,
+    // itemId -> timestamp. Set after a photo rotate: the URL is unchanged but
+    // the pixels are not, so every <img> for that item needs a cache-bust.
+    photoBust: {}
 };
+
+// Fiber suggestions for the composition editor (shared <datalist>)
+const FIBER_OPTIONS = [
+    'cotton', 'elastane', 'polyester', 'polyamide', 'nylon', 'wool', 'merino',
+    'cashmere', 'silk', 'linen', 'viscose', 'modal', 'lyocell', 'spandex',
+    'acrylic', 'rayon', 'leather', 'suede', 'down', 'rubber'
+];
+
+const CARE_METHOD_OPTIONS = [
+    'Machine wash, tumble dry',
+    'Machine wash, line dry',
+    'Machine wash cold, dry flat',
+    'Hand wash, dry flat',
+    'Dry clean',
+    'Dry clean only',
+    'Spot clean / wipe down'
+];
 
 // ========================================
 // API Helper
@@ -151,12 +171,37 @@ function formatCurrency(value) {
     return '$' + value.toFixed(2);
 }
 
+// Photo rotation changes the bytes behind an unchanged URL, so the browser
+// would happily serve the stale (un-rotated) image. Append a per-item token.
+function bustedPhotoUrl(url, itemId) {
+    const t = state.photoBust[itemId];
+    if (!url || !t) return url;
+    return url + (url.includes('?') ? '&' : '?') + 't=' + t;
+}
+
 function getItemThumbHtml(item) {
     if (item.photo) {
-        const src = item.photo_thumb || item.photo;
+        const src = bustedPhotoUrl(item.photo_thumb || item.photo, item.id);
         return `<img src="${escapeHtml(src)}" alt="${escapeHtml(item.name)}" loading="lazy">`;
     }
     return `<span class="placeholder">#${escapeHtml(item.number)}</span>`;
+}
+
+// Distinct non-empty values of a field across the closet, case-preserving
+// (first spelling wins), sorted — used to populate <datalist> combos.
+function existingItemValues(key) {
+    const seen = new Map();
+    (state.items || []).forEach(i => {
+        const raw = i && i[key] != null ? String(i[key]).trim() : '';
+        if (!raw) return;
+        const k = raw.toLowerCase();
+        if (!seen.has(k)) seen.set(k, raw);
+    });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function datalistOptionsHtml(values) {
+    return values.map(v => `<option value="${escapeHtml(v)}"></option>`).join('');
 }
 
 function renderTagChips(tags, small = false) {
@@ -1249,10 +1294,10 @@ function openPurchaseWishlistModal(item) {
             <button class="modal-close" onclick="closeModal()">&times;</button>
         </div>
         <div class="modal-body">
-            <p style="margin-bottom: 16px;">Enter the item number for your closet:</p>
             <div class="form-group">
-                <label class="form-label">Item Number</label>
+                <label class="form-label">Item Number (optional)</label>
                 <input type="number" class="form-input" id="purchase-item-number" placeholder="e.g. 42">
+                <div class="form-hint">Leave blank to assign the next number automatically.</div>
             </div>
             ${!item.category ? '<p class="text-muted" style="font-size: 13px;">Note: This item needs a category set before purchase.</p>' : ''}
         </div>
@@ -1264,15 +1309,13 @@ function openPurchaseWishlistModal(item) {
 
     document.getElementById('confirm-purchase-btn').addEventListener('click', async () => {
         const number = parseInt(document.getElementById('purchase-item-number').value);
-        if (!number) {
-            toast('Please enter an item number', 'error');
-            return;
-        }
+        // Blank is fine — the server assigns max + 1.
+        const body = isNaN(number) ? {} : { number };
 
         try {
             const result = await api(`/wishlist/${item.id}/purchase`, {
                 method: 'POST',
-                body: { number }
+                body
             });
             closeModal();
             toast(`Added to closet as #${result.number}!`);
@@ -1308,6 +1351,19 @@ function renderItemCard(item, currentLifecycleFilter) {
                     <span>${item.lifetime_wears} wears</span>
                 </div>
             </div>
+        </div>
+    `;
+}
+
+function compositionRowHtml(pct, fiber) {
+    const pctVal = (pct === 0 || pct) ? escapeHtml(pct) : '';
+    return `
+        <div class="comp-row">
+            <input type="number" class="form-input comp-pct" min="1" max="100" step="1"
+                   inputmode="numeric" placeholder="%" value="${pctVal}">
+            <input type="text" class="form-input comp-fiber" list="fiber-options"
+                   placeholder="fiber" value="${escapeHtml(fiber || '')}">
+            <button type="button" class="comp-remove" aria-label="Remove fiber">&times;</button>
         </div>
     `;
 }
@@ -1377,7 +1433,7 @@ function openItemModal(item) {
                 <div class="photo-strip" id="item-photo-strip">
                     ${photos.map(p => `
                         <div class="photo-strip-item ${p.url === coverUrl ? 'is-cover' : ''}" data-photo-id="${p.id}" data-photo-url="${escapeHtml(p.url)}">
-                            <img src="${escapeHtml(p.url)}" alt="Item photo">
+                            <img src="${escapeHtml(bustedPhotoUrl(p.url, item.id))}" alt="Item photo">
                             ${p.url === coverUrl ? '<div class="cover-badge">Cover</div>' : ''}
                         </div>
                     `).join('')}
@@ -1385,6 +1441,52 @@ function openItemModal(item) {
             </div>
         `;
     }
+
+    // Number: new items get their number assigned by the server (max + 1).
+    // Show what it will most likely be, but never send it.
+    let nextNumberLabel = 'auto';
+    if (isNew) {
+        const nums = (state.items || [])
+            .map(i => parseInt(i.number))
+            .filter(n => !isNaN(n));
+        if (nums.length) nextNumberLabel = `#${Math.max(...nums) + 1} (auto)`;
+    }
+
+    const numberFieldHtml = isNew
+        ? `
+            <div class="form-group form-group-auto">
+                <label class="form-label">Number</label>
+                <div class="form-static-note">${escapeHtml(nextNumberLabel)}</div>
+            </div>
+        `
+        : `
+            <div class="form-group">
+                <label class="form-label">Number</label>
+                <input type="number" class="form-input" name="number" value="${item?.number || ''}" required>
+            </div>
+        `;
+
+    const brandOptions = datalistOptionsHtml(existingItemValues('brand'));
+    const colorOptions = datalistOptionsHtml(existingItemValues('color'));
+    const fiberOptions = datalistOptionsHtml(FIBER_OPTIONS);
+
+    // Fabric composition rows (prefilled when editing)
+    const existingComposition = Array.isArray(item?.composition) ? item.composition : [];
+    const compositionRowsHtml = (existingComposition.length ? existingComposition : [{ pct: '', fiber: '' }])
+        .map(c => compositionRowHtml(c.pct, c.fiber))
+        .join('');
+
+    // Care method only matters on create — the server never regenerates
+    // care_notes on PATCH, so showing the select on edit would just mislead.
+    const careMethodHtml = isNew ? `
+        <div class="form-group">
+            <label class="form-label">Care</label>
+            <select class="form-select" name="care_method">
+                <option value="">Select...</option>
+                ${CARE_METHOD_OPTIONS.map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('')}
+            </select>
+        </div>
+    ` : '';
 
     // Link import section for new items
     const linkImportHtml = isNew ? `
@@ -1410,13 +1512,12 @@ function openItemModal(item) {
             <form id="item-form">
                 ${linkImportHtml}
                 <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Number</label>
-                        <input type="number" class="form-input" name="number" value="${item?.number || ''}" required>
-                    </div>
+                    ${numberFieldHtml}
                     <div class="form-group">
                         <label class="form-label">Name</label>
-                        <input type="text" class="form-input" name="name" value="${escapeHtml(item?.name || '')}" required>
+                        <input type="text" class="form-input" name="name" value="${escapeHtml(item?.name || '')}"
+                               placeholder="e.g. AG Everett Sateen Slim Straight Pants" required>
+                        <div class="form-hint">Convention: Brand + product name</div>
                     </div>
                 </div>
                 <div class="form-group">
@@ -1435,11 +1536,15 @@ function openItemModal(item) {
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">Brand</label>
-                        <input type="text" class="form-input" name="brand" value="${escapeHtml(item?.brand || '')}">
+                        <input type="text" class="form-input" name="brand" list="brand-options"
+                               value="${escapeHtml(item?.brand || '')}">
+                        <datalist id="brand-options">${brandOptions}</datalist>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Color</label>
-                        <input type="text" class="form-input" name="color" value="${escapeHtml(item?.color || '')}">
+                        <input type="text" class="form-input" name="color" list="color-options"
+                               value="${escapeHtml(item?.color || '')}">
+                        <datalist id="color-options">${colorOptions}</datalist>
                     </div>
                 </div>
                 <div class="form-row">
@@ -1453,7 +1558,17 @@ function openItemModal(item) {
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Care Notes</label>
+                    <label class="form-label">Fabric</label>
+                    <div id="composition-rows">${compositionRowsHtml}</div>
+                    <div class="comp-footer">
+                        <button type="button" class="btn btn-outline btn-sm" id="add-fiber-btn">+ Add fiber</button>
+                        <span class="comp-total" id="comp-total">0%</span>
+                    </div>
+                    <datalist id="fiber-options">${fiberOptions}</datalist>
+                </div>
+                ${careMethodHtml}
+                <div class="form-group">
+                    <label class="form-label">Care notes (optional — auto-filled from fabric + care if left blank)</label>
                     <textarea class="form-textarea" name="care_notes">${escapeHtml(item?.care_notes || '')}</textarea>
                 </div>
                 <div class="form-group">
@@ -1467,6 +1582,7 @@ function openItemModal(item) {
                 <div class="form-group">
                     <label class="form-label">Materials</label>
                     <div class="chip-row" id="material-picker">${materialChipsHtml}</div>
+                    <div class="form-hint">Auto-selected from fabric when left untouched (new items)</div>
                 </div>
                 ${photoGalleryHtml}
                 <div class="form-group">
@@ -1557,12 +1673,65 @@ function openItemModal(item) {
     });
 
     // Tag pickers
-    ['season-tag-picker', 'vibe-tag-picker', 'material-picker'].forEach(id => {
+    ['season-tag-picker', 'vibe-tag-picker'].forEach(id => {
         document.getElementById(id)?.addEventListener('click', (e) => {
             const chip = e.target.closest('.chip');
             if (chip) chip.classList.toggle('active');
         });
     });
+
+    // Materials: remember whether the user actually touched the chips. If they
+    // didn't and a composition was entered, the server derives materials.
+    let materialsTouched = false;
+    document.getElementById('material-picker')?.addEventListener('click', (e) => {
+        const chip = e.target.closest('.chip');
+        if (!chip) return;
+        chip.classList.toggle('active');
+        materialsTouched = true;
+    });
+
+    // Composition editor
+    const compRowsEl = document.getElementById('composition-rows');
+
+    function readComposition() {
+        return Array.from(compRowsEl.querySelectorAll('.comp-row')).map(row => {
+            const pct = parseFloat(row.querySelector('.comp-pct').value);
+            const fiber = row.querySelector('.comp-fiber').value.trim();
+            return { pct, fiber };
+        }).filter(c => c.fiber && !isNaN(c.pct) && c.pct > 0);
+    }
+
+    function updateCompTotal() {
+        const total = Array.from(compRowsEl.querySelectorAll('.comp-pct'))
+            .reduce((sum, el) => sum + (parseFloat(el.value) || 0), 0);
+        const badge = document.getElementById('comp-total');
+        if (!badge) return;
+        badge.textContent = `${Math.round(total * 10) / 10}%`;
+        badge.classList.toggle('is-complete', Math.round(total * 10) / 10 === 100);
+    }
+
+    compRowsEl.addEventListener('input', updateCompTotal);
+    compRowsEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.comp-remove');
+        if (!btn) return;
+        const rows = compRowsEl.querySelectorAll('.comp-row');
+        if (rows.length <= 1) {
+            // Keep one empty row around rather than leaving a bare label
+            btn.closest('.comp-row').querySelectorAll('input').forEach(i => { i.value = ''; });
+        } else {
+            btn.closest('.comp-row').remove();
+        }
+        updateCompTotal();
+    });
+
+    document.getElementById('add-fiber-btn')?.addEventListener('click', () => {
+        compRowsEl.insertAdjacentHTML('beforeend', compositionRowHtml('', ''));
+        const rows = compRowsEl.querySelectorAll('.comp-row');
+        rows[rows.length - 1].querySelector('.comp-pct').focus();
+        updateCompTotal();
+    });
+
+    updateCompTotal();
 
     // Save
     document.getElementById('save-item-btn').addEventListener('click', async () => {
@@ -1573,8 +1742,9 @@ function openItemModal(item) {
         const vibeTagEls = document.querySelectorAll('#vibe-tag-picker .chip.active');
         const materialEls = document.querySelectorAll('#material-picker .chip.active');
 
+        const composition = readComposition();
+
         const data = {
-            number: parseInt(formData.get('number')),
             name: formData.get('name'),
             category: formData.get('category'),
             lifecycle: formData.get('lifecycle') || 'active',
@@ -1583,10 +1753,28 @@ function openItemModal(item) {
             size: formData.get('size') || '',
             price: parseFloat(formData.get('price')) || 0,
             care_notes: formData.get('care_notes') || '',
+            composition,
             season_tags: Array.from(seasonTagEls).map(el => el.dataset.tag),
-            vibe_tags: Array.from(vibeTagEls).map(el => el.dataset.tag),
-            materials: Array.from(materialEls).map(el => el.dataset.tag)
+            vibe_tags: Array.from(vibeTagEls).map(el => el.dataset.tag)
         };
+
+        // New items: the server assigns the next number, so don't send one.
+        if (!isNew) {
+            data.number = parseInt(formData.get('number'));
+        }
+
+        // care_method only feeds care_notes composition on create; PATCH ignores it.
+        if (isNew) {
+            const careMethod = formData.get('care_method') || '';
+            if (careMethod) data.care_method = careMethod;
+        }
+
+        // Omitting `materials` on create lets the server derive them from the
+        // fibers. On edit it derives nothing, so always send the chips.
+        const chosenMaterials = Array.from(materialEls).map(el => el.dataset.tag);
+        if (!(isNew && !materialsTouched && composition.length > 0)) {
+            data.materials = chosenMaterials;
+        }
 
         // Include fetched image_url for new items
         if (isNew && fetchedImageUrl) {
@@ -1655,21 +1843,42 @@ function openItemModal(item) {
 }
 
 function openPhotoActionsModal(item, photoId, photoUrl) {
+    const previewUrl = bustedPhotoUrl(photoUrl, item.id);
     openModal(`
         <div class="modal-header">
             <span class="modal-title">Photo Options</span>
             <button class="modal-close" onclick="closeModal()">&times;</button>
         </div>
         <div class="modal-body">
-            <img src="${escapeHtml(photoUrl)}" class="photo-actions-preview" onclick="openFullScreenImage('${escapeHtml(photoUrl)}')">
+            <img src="${escapeHtml(previewUrl)}" class="photo-actions-preview" onclick="openFullScreenImage('${escapeHtml(previewUrl)}')">
             <p class="text-muted text-center" style="font-size: 13px; margin-top: 8px;">Tap image to view full size</p>
         </div>
         <div class="modal-footer" style="flex-direction: column; gap: 8px;">
+            <button class="btn btn-secondary btn-block" id="rotate-photo-btn">Rotate 90&deg;</button>
             <button class="btn btn-secondary btn-block" id="set-cover-btn">Set as Cover</button>
             <button class="btn btn-danger btn-block" id="delete-photo-btn">Delete Photo</button>
             <button class="btn btn-outline btn-block" onclick="closeModal()">Cancel</button>
         </div>
     `);
+
+    document.getElementById('rotate-photo-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('rotate-photo-btn');
+        btn.disabled = true;
+        try {
+            const updatedItem = await api(`/items/${item.id}/photos/${photoId}/rotate`, {
+                method: 'POST',
+                body: { degrees: 90 }
+            });
+            // Same URL, different pixels — bust every img for this item.
+            state.photoBust[item.id] = Date.now();
+            closeModal();
+            toast('Photo rotated 90°');
+            openItemModal(updatedItem);
+        } catch (err) {
+            btn.disabled = false;
+            toast(err.message, 'error');
+        }
+    });
 
     document.getElementById('set-cover-btn').addEventListener('click', async () => {
         try {

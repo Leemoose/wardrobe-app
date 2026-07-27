@@ -631,6 +631,94 @@ html, body {
     flex: 1;
 }
 
+/* A read-only stand-in for an input (e.g. the auto-assigned item number) */
+.form-row .form-group.form-group-auto {
+    flex: 0 0 auto;
+}
+
+.form-static-note {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: var(--space-sm) 0;
+    font-size: 15px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.form-hint {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--text-muted);
+}
+
+/* Fabric composition editor */
+.comp-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.comp-row .comp-pct {
+    flex: 0 0 64px;
+    width: 64px;
+    padding-left: var(--space-sm);
+    padding-right: var(--space-sm);
+    text-align: center;
+}
+
+.comp-row .comp-fiber {
+    flex: 1;
+    min-width: 0;
+}
+
+.comp-remove {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 20px;
+    line-height: 1;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.comp-remove:hover {
+    color: var(--danger);
+    background: var(--bg-tertiary);
+}
+
+.comp-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
+}
+
+.comp-total {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--warning);
+    color: var(--warning);
+}
+
+.comp-total.is-complete {
+    border-color: var(--success);
+    color: var(--success);
+}
+
 /* File Input */
 .file-input-wrapper {
     position: relative;

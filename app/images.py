@@ -8,7 +8,7 @@ import os
 import threading
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.db import PHOTO_DIR
 
@@ -18,11 +18,36 @@ THUMB_DIR = os.path.join(PHOTO_DIR, "thumbs")
 
 
 def process_image(contents: bytes) -> Image.Image:
-    """Process uploaded image: convert to RGB and resize to MAX_SIZE."""
+    """Process uploaded image: apply EXIF orientation, convert to RGB, resize.
+
+    Phone cameras store rotation as EXIF metadata rather than rotating pixels;
+    without the transpose, portrait photos land sideways once the metadata is
+    stripped by re-encoding.
+    """
     img = Image.open(BytesIO(contents))
+    img = ImageOps.exif_transpose(img)
     img = img.convert("RGB")
     img.thumbnail(MAX_SIZE)
     return img
+
+
+def rotate_photo_file(filename: str, degrees: int) -> bool:
+    """Rotate a stored photo clockwise by `degrees` and regenerate its thumbnail.
+
+    Returns False if the file does not exist.
+    """
+    path = os.path.join(PHOTO_DIR, filename)
+    if not os.path.exists(path):
+        return False
+    img = Image.open(path).convert("RGB")
+    # PIL rotates counter-clockwise; UI semantics are clockwise.
+    img = img.rotate(-degrees, expand=True)
+    img.save(path, "JPEG", quality=85)
+    try:
+        save_thumb(img, filename)
+    except Exception as e:
+        print(f"[wardrobe] thumbnail regen failed for {filename}: {e}")
+    return True
 
 
 def save_thumb(img: Image.Image, filename: str):
