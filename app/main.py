@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.db import init_db, PHOTO_DIR
 from app.images import start_thumb_backfill
-from app.routers import items, outfits, wear, laundry, weather, stats, settings, ai, backup, imports, trips, care
+from app.routers import items, outfits, wear, laundry, weather, stats, settings, ai, backup, imports, trips, care, scents
 
 app = FastAPI(title="Wardrobe")
 
@@ -39,6 +39,7 @@ app.include_router(backup.router, prefix="/api")
 app.include_router(imports.router, prefix="/api")
 app.include_router(trips.router, prefix="/api")
 app.include_router(care.router, prefix="/api")
+app.include_router(scents.router, prefix="/api")
 
 # Serve the frontend - mounted last so /api and /photos take precedence
 # Use path relative to this module file

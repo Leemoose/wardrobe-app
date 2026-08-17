@@ -2432,3 +2432,440 @@ html, body {
     font-weight: 500;
     text-transform: uppercase;
 }
+
+/* ========================================
+   Scents
+   ======================================== */
+
+.mt-sm {
+    margin-top: var(--space-sm);
+}
+
+/* ---- Ratings ---- */
+
+.stars {
+    display: inline-flex;
+    gap: 2px;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.stars.small {
+    font-size: 14px;
+}
+
+.star {
+    color: var(--border);
+}
+
+.star.filled {
+    color: var(--warning);
+}
+
+.star-picker {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.star-picker .star {
+    font-size: 30px;
+    line-height: 1;
+    cursor: pointer;
+    /* Generous tap target: a 30px glyph alone is fiddly on a phone, and this
+       is the control the whole section exists for. */
+    padding: var(--space-xs) 2px;
+    transition: color 0.15s, transform 0.1s;
+}
+
+.star-picker .star:active {
+    transform: scale(1.2);
+}
+
+.star-clear {
+    margin-left: var(--space-sm);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+    min-height: 44px;
+}
+
+/* ---- List ---- */
+
+.scent-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+}
+
+.scent-sort {
+    flex: 1;
+}
+
+.scent-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    /* Clears the floating add button on the last card. */
+    padding-bottom: 80px;
+}
+
+.scent-card {
+    display: flex;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+
+.scent-card:active {
+    background: var(--bg-tertiary);
+}
+
+.scent-thumb {
+    width: 56px;
+    height: 72px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.scent-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.scent-placeholder {
+    width: 28px;
+    height: 28px;
+    color: var(--text-muted);
+}
+
+.scent-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.scent-name-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.scent-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.scent-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.scent-badge {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.scent-badge.status-tried {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.scent-badge.status-wishlist {
+    background: rgba(124, 158, 255, 0.2);
+    color: var(--accent);
+}
+
+.scent-badge.status-retired {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+.scent-impression {
+    margin-top: var(--space-xs);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    /* Two lines of the written note as a preview — enough to recognise which
+       verdict this is without turning the list into a wall of prose. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.scent-meta {
+    margin-top: var(--space-xs);
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* ---- Detail ---- */
+
+.scent-detail-head {
+    display: flex;
+    gap: var(--space-md);
+    align-items: center;
+    margin-bottom: var(--space-md);
+}
+
+.scent-detail-thumb {
+    width: 72px;
+    height: 92px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.scent-detail-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.scent-detail-status {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.scent-pyramid {
+    margin-bottom: var(--space-md);
+}
+
+.pyramid-row {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: baseline;
+    margin-bottom: var(--space-xs);
+}
+
+.pyramid-label {
+    flex-shrink: 0;
+    width: 46px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.pyramid-notes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+
+.scent-facts {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-xs) var(--space-md);
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--border);
+    margin-bottom: var(--space-md);
+}
+
+.scent-fact {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    font-size: 13px;
+}
+
+.fact-key {
+    color: var(--text-muted);
+}
+
+.fact-value {
+    color: var(--text-primary);
+}
+
+/* ---- Journal ---- */
+
+.journal-section {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-md);
+}
+
+.journal-header {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: var(--space-sm);
+}
+
+.journal-entry {
+    padding: var(--space-sm) 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.journal-entry.feed {
+    cursor: pointer;
+}
+
+.journal-entry-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-xs);
+}
+
+.journal-scent-name {
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.journal-date {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.journal-sprays {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 1px 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-full);
+}
+
+.journal-delete {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 var(--space-sm);
+}
+
+.journal-note {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+}
+
+.journal-empty {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: var(--space-sm) 0;
+}
+
+.journal-add {
+    margin-top: var(--space-md);
+}
+
+.journal-add-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+
+.journal-inline-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.journal-sprays-input {
+    width: 72px;
+}
+
+/* ---- Today card ---- */
+
+.scent-today-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.scent-today-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: var(--space-sm);
+}
+
+.scent-today-body {
+    display: flex;
+    gap: var(--space-md);
+    align-items: center;
+}
+
+.scent-today-thumb {
+    width: 48px;
+    height: 62px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.scent-today-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.scent-today-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.scent-today-name {
+    font-weight: 500;
+}
+
+.scent-today-reason {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.scent-today-note {
+    margin-top: var(--space-sm);
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.scent-today-actions {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}
+
+.scent-today-actions .btn {
+    flex: 1;
+}

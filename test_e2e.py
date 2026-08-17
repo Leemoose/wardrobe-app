@@ -644,7 +644,8 @@ async def test_n8_api_paths(client: httpx.AsyncClient):
             "/wishlist", "/wishlist/", "/ai/generate", "/ai/pending", "/ai/",
             "/generate", "/pending", "/approve", "/reject",
             "/trips", "/trips/",
-            "/care", "/care/", "/care/due", "/care/guides", "/care/log"
+            "/care", "/care/", "/care/due", "/care/guides", "/care/log",
+            "/scents", "/scents/",
         ]
 
         # Check for any API paths that look wrong
@@ -671,6 +672,108 @@ async def test_n8_api_paths(client: httpx.AsyncClient):
             pass_test("N8-paths")
     except Exception as e:
         fail_test("N8-paths", str(e))
+
+
+async def test_n10_scents(client: httpx.AsyncClient):
+    """N10: Scent journal - rating, notes, bottle accounting, suggestions."""
+    log("N10: Scents journal")
+
+    try:
+        # A scent you own, tagged for a season and rated
+        resp = await client.post(f"{API}/scents", json={
+            "name": "Test Cologne", "house": "TestHouse", "concentration": "edp",
+            "family": "woody", "notes_top": ["Bergamot", "bergamot"],
+            "size_ml": 100, "price": 120, "rating": 4,
+            "impression": "Sharp opening, soft dry-down.",
+        })
+        assert resp.status_code == 201, f"create failed: {resp.text}"
+        owned = resp.json()
+        assert owned["remaining_pct"] == 100, owned["remaining_pct"]
+        # Notes are de-duplicated and lower-cased
+        assert owned["notes_top"] == ["bergamot"], owned["notes_top"]
+
+        # The creation impression opens the journal
+        detail = (await client.get(f"{API}/scents/{owned['id']}")).json()
+        assert len(detail["notes"]) == 1, detail["notes"]
+
+        # A scent tried but not owned
+        resp = await client.post(f"{API}/scents", json={
+            "name": "Sampled Only", "status": "tried", "rating": 2,
+            "impression": "Too sweet on me.",
+        })
+        assert resp.status_code == 201, resp.text
+        tried = resp.json()
+
+        # Journal entry that is also a wearing: rating carries over, the
+        # bottle goes down, and the wear counters move.
+        resp = await client.post(f"{API}/scents/{owned['id']}/notes", json={
+            "note": "Wore it all day, lasted well.", "rating": 5, "sprays": 3,
+        })
+        assert resp.status_code == 201, resp.text
+        after = resp.json()["scent"]
+        assert after["rating"] == 5, after["rating"]
+        assert abs(after["remaining_ml"] - 99.7) < 0.001, after["remaining_ml"]
+        assert after["lifetime_wears"] == 1, after["lifetime_wears"]
+
+        # A note with no sprays is not a wearing
+        resp = await client.post(f"{API}/scents/{owned['id']}/notes",
+                                 json={"note": "Second thoughts."})
+        assert resp.json()["scent"]["lifetime_wears"] == 1
+
+        # An entirely empty entry is rejected
+        resp = await client.post(f"{API}/scents/{owned['id']}/notes", json={"note": "  "})
+        assert resp.status_code == 400, resp.status_code
+
+        # Deleting a wear entry gives the volume back
+        notes = (await client.get(f"{API}/scents/{owned['id']}/notes")).json()
+        wear_id = [n for n in notes if n["sprays"] > 0][0]["id"]
+        resp = await client.delete(f"{API}/scents/{owned['id']}/notes/{wear_id}")
+        restored = resp.json()["scent"]
+        assert abs(restored["remaining_ml"] - 100.0) < 0.001, restored["remaining_ml"]
+        assert restored["lifetime_wears"] == 0
+
+        # Suggestions never offer something you do not own
+        resp = await client.get(f"{API}/scents/suggest?time_of_day=day")
+        assert resp.status_code == 200, resp.text
+        suggest = resp.json()
+        assert all(s["id"] != tried["id"] for s in suggest["scents"]), \
+            "a sampled scent must not be suggested"
+        assert suggest["owned_count"] >= 1
+
+        # Unrated scents sort last, not alongside the low ratings
+        await client.post(f"{API}/scents", json={"name": "Zzz Unrated", "status": "tried"})
+        order = [s["name"] for s in (await client.get(f"{API}/scents?sort=rating")).json()]
+        assert order[-1] == "Zzz Unrated", order
+
+        # Filters
+        tried_names = [s["name"] for s in (await client.get(f"{API}/scents?status=tried")).json()]
+        assert "Sampled Only" in tried_names and "Test Cologne" not in tried_names
+
+        # Validation
+        assert (await client.post(f"{API}/scents", json={"name": ""})).status_code == 400
+        assert (await client.post(f"{API}/scents", json={"name": "X", "status": "nope"})).status_code == 400
+        assert (await client.get(f"{API}/scents/999999")).status_code == 404
+
+        # Ratings clamp instead of erroring
+        resp = await client.patch(f"{API}/scents/{owned['id']}", json={"rating": 99})
+        assert resp.json()["rating"] == 5
+
+        # The journal must survive a backup - it exists nowhere else
+        backup = (await client.get(f"{API}/backup/json")).json()
+        assert "scents" in backup, "backup is missing scents"
+        exported = next(s for s in backup["scents"] if s["id"] == owned["id"])
+        assert exported["notes"], "backup dropped the journal entries"
+
+        # Deleting a scent takes its journal with it
+        await client.delete(f"{API}/scents/{tried['id']}")
+        assert (await client.get(f"{API}/scents/{tried['id']}")).status_code == 404
+        feed = (await client.get(f"{API}/scents/journal/recent")).json()
+        assert all(e["fragrance_id"] != tried["id"] for e in feed), \
+            "journal entries outlived their scent"
+
+        pass_test("N10-scents")
+    except Exception as e:
+        fail_test("N10-scents", str(e))
 
 
 def test_n9_seed_script():
@@ -829,6 +932,7 @@ async def main():
         await test_n8_static_routes(client)
         await test_n8_api_paths(client)
         test_n9_seed_script()
+        await test_n10_scents(client)
 
     # Stop server
     server.should_exit = True

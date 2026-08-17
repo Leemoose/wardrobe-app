@@ -11,12 +11,17 @@ from fastapi import APIRouter, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from app.db import get_db, item_to_dict, outfit_to_dict, get_setting, DEFAULT_SETTINGS, DB_PATH, PHOTO_DIR
+from app.db import (
+    get_db, item_to_dict, outfit_to_dict, fragrance_to_dict, get_setting,
+    DEFAULT_SETTINGS, DB_PATH, PHOTO_DIR,
+)
 
 router = APIRouter(tags=["backup"])
 
 # Tables cleared by a reset, ordered so child rows are removed before parents.
 RESET_TABLES = [
+    "fragrance_notes",
+    "fragrances",
     "trip_outfits",
     "trip_items",
     "trips",
@@ -57,7 +62,7 @@ def reset_wardrobe(payload: ResetRequest):
         # Reset AUTOINCREMENT counters so new items start at 1.
         db.execute(
             "DELETE FROM sqlite_sequence WHERE name IN "
-            "('items','outfits','wear_events','trips')"
+            "('items','outfits','wear_events','trips','fragrances','fragrance_notes')"
         )
 
     photos_removed = 0
@@ -122,12 +127,28 @@ def _build_export_dict(db) -> dict:
             ]
         })
 
+    # Scents, each with its journal inline. These notes are hand-written and
+    # exist nowhere else, so they are the part of a backup that actually matters.
+    scent_rows = db.execute("SELECT * FROM fragrances ORDER BY id").fetchall()
+    scents = []
+    for row in scent_rows:
+        scent = fragrance_to_dict(row)
+        scent["notes"] = [
+            dict(n) for n in db.execute(
+                "SELECT * FROM fragrance_notes WHERE fragrance_id = ? "
+                "ORDER BY date DESC, id DESC",
+                (row["id"],),
+            ).fetchall()
+        ]
+        scents.append(scent)
+
     return {
         "exported_at": date.today().isoformat(),
         "settings": settings,
         "items": items,
         "outfits": outfits,
         "wear_events": wear_events,
+        "scents": scents,
     }
 
 

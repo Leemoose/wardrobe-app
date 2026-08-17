@@ -10,6 +10,7 @@ A self-hosted, single-user wardrobe manager you run on your home NAS with Docker
 - **Morning suggestions** — Get outfit recommendations filtered by today's weather, season, vibe, and what's clean
 - **Laundry tracking** — Mark items dirty/clean; set wear-count thresholds per category for "needs washing" alerts
 - **Wear stats** — Track cost-per-wear, total wears, and view your wear history on a calendar
+- **Scent journal** — Rate every fragrance you've tried and keep dated notes on it, whether or not you own a bottle; get a scent suggested for today's weather
 
 ### v1.1 Additions
 
@@ -85,6 +86,30 @@ A self-hosted, single-user wardrobe manager you run on your home NAS with Docker
 **Note:** v1.5 updates the service worker cache to `wardrobe-v7`; hard-refresh after upgrading.
 
 **Database schema:** v1.5 adds `kind` and `cost` columns to `maintenance_events`. Migrations run automatically on startup and are now logged to the container output; all existing data is preserved.
+
+### v1.9 Additions — Scents
+
+A fragrance journal, under **Closet → Scents**. The point is writing down what you
+thought of something and giving it a rating; the daily suggestion is a bonus once
+you have a few bottles in there.
+
+- **Rate and write** — Every scent gets a 1–5 rating and an *impression*: the free-text headline of what you think of it. Tapping a star saves immediately.
+- **Scents you don't own** — A scent's **status** is `owned`, `tried`, `wishlist`, or `retired`. Something sampled at a counter still gets a rating and notes; it just never shows up in the daily suggestion. Status defaults to `owned`, so change it when journaling a sample.
+- **Dated journal** — Each scent keeps a log of dated entries, so a verdict can change over time without erasing what you thought the first time. An entry can carry its own rating (which becomes the current one) and a spray count. The **Journal** button shows every entry across all scents, newest first.
+- **Bottle tracking** — Logging sprays draws the bottle down (0.1 ml per spray by default) and counts as a wearing, giving you a remaining percentage and a cost per wear. Deleting an entry gives the volume back. Entirely optional: leave sprays at 0 and it's purely a notebook.
+- **Scent for today** — The Today tab suggests one owned scent, ranked on today's temperature and season, the time of day, your rating, and how recently you wore it (something worn in the last two days is pushed down — you stop smelling it). Untagged scents are candidates for anything; if everything you own is tagged for another season it relaxes the filter and says so rather than showing nothing.
+- **Optional detail** — House, concentration, olfactory family, the top/heart/base pyramid, sillage, longevity, season and occasion tags, bottle size, price, and a photo. Only the name is required.
+
+Tunable in Settings' stored values (`scent_rules`): `ml_per_spray`, `default_sprays`,
+`rotation_days`, the `hot_above_f` / `cold_below_f` temperature bands, and
+`low_bottle_pct`. The olfactory family list lives in `fragrance_families`.
+
+**Database schema:** v1.9 adds two new tables, `fragrances` and `fragrance_notes`.
+They are created on startup alongside the existing ones; nothing else is touched.
+Scents and their journals are included in JSON and ZIP backups — the written notes
+exist nowhere else, so back up as usual.
+
+**Note:** v1.9 updates the service worker cache to `wardrobe-v15`; hard-refresh after upgrading.
 
 ---
 
@@ -383,6 +408,7 @@ wardrobe-app/
     ├── main.py           # FastAPI application entry
     ├── db.py             # SQLite database layer
     ├── weather.py        # Open-Meteo integration
+    ├── scents.py         # Fragrance scoring for the daily pick
     ├── ai.py             # Anthropic/Claude integration
     ├── routers/          # API route handlers
     └── static/           # Vanilla JS PWA frontend

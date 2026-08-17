@@ -86,6 +86,29 @@ DEFAULT_SETTINGS = {
     },
     # Care-kit supplies the user already owns (lower-cased names).
     "care_supplies_owned": [],
+    # Olfactory families available on fragrances (the scents section's
+    # equivalent of `materials` for garments).
+    "fragrance_families": [
+        "citrus", "aquatic", "fresh", "green", "fougere", "aromatic",
+        "floral", "spicy", "woody", "amber", "oriental", "gourmand",
+        "leather", "chypre", "musk", "tobacco",
+    ],
+    # Scent picking + bottle accounting.
+    #   ml_per_spray: an atomizer delivers roughly 0.1 ml, which is what turns
+    #       a logged wear into a drop in remaining volume.
+    #   rotation_days: nose fatigue is real — a scent worn this recently is
+    #       pushed to the bottom of today's suggestions.
+    #   hot_above_f / cold_below_f: temperature bands that decide whether the
+    #       day calls for something light or something heavy.
+    #   low_bottle_pct: below this the UI flags the bottle as running low.
+    "scent_rules": {
+        "ml_per_spray": 0.1,
+        "default_sprays": 2,
+        "rotation_days": 2,
+        "hot_above_f": 80,
+        "cold_below_f": 50,
+        "low_bottle_pct": 15,
+    },
     # Weather-based outfit warnings configuration.
     "weather_rules": {
         "rain_precip_threshold": 50,
@@ -209,6 +232,62 @@ CREATE TABLE IF NOT EXISTS maintenance_events (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Scents (v1.9). Primarily a tasting journal: every fragrance you have tried
+-- gets a rating and a written impression, whether or not you own a bottle.
+-- Own table rather than another `items` category because almost nothing here
+-- is a garment field — an olfactory pyramid instead of a fabric composition,
+-- depletion by volume instead of getting dirty — and because the whole point
+-- is recording scents you *don't* own, which the closet has no concept of.
+--   status: owned    - in the collection, eligible for daily suggestions
+--           tried    - sampled somewhere, no bottle (still rated + journaled)
+--           wishlist - want it
+--           retired  - finished, or fell out of favour
+--   rating: 0 = unrated, otherwise 1-5.
+--   impression: the current headline take. Dated entries live in
+--           fragrance_notes, so an opinion can change without losing history.
+CREATE TABLE IF NOT EXISTS fragrances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    house TEXT DEFAULT '',
+    concentration TEXT DEFAULT '',
+    family TEXT DEFAULT '',
+    notes_top TEXT DEFAULT '[]',
+    notes_heart TEXT DEFAULT '[]',
+    notes_base TEXT DEFAULT '[]',
+    season_tags TEXT DEFAULT '[]',
+    vibe_tags TEXT DEFAULT '[]',
+    time_of_day TEXT DEFAULT 'any' CHECK (time_of_day IN ('any','day','night')),
+    sillage TEXT DEFAULT 'moderate' CHECK (sillage IN ('intimate','moderate','strong')),
+    longevity_hours REAL DEFAULT 0,
+    size_ml REAL DEFAULT 0,
+    remaining_ml REAL DEFAULT 0,
+    price REAL DEFAULT 0,
+    paid_price REAL DEFAULT 0,
+    rating INTEGER DEFAULT 0,
+    impression TEXT DEFAULT '',
+    tried_on TEXT DEFAULT NULL,
+    photo TEXT DEFAULT '',
+    status TEXT DEFAULT 'owned' CHECK (status IN ('owned','tried','wishlist','retired')),
+    last_worn TEXT DEFAULT NULL,
+    lifetime_wears INTEGER DEFAULT 0,
+    lifetime_sprays INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- One dated entry in the journal. Wearing a scent and having a thought about
+-- it are the same act, so this is both the wear log and the notebook: `sprays`
+-- above zero also draws down the bottle, and `rating` lets a verdict move over
+-- time without overwriting what you thought the first time.
+CREATE TABLE IF NOT EXISTS fragrance_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fragrance_id INTEGER NOT NULL REFERENCES fragrances(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    note TEXT DEFAULT '',
+    rating INTEGER DEFAULT 0,
+    sprays INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -223,6 +302,9 @@ CREATE INDEX IF NOT EXISTS idx_outfit_items_item ON outfit_items(item_id);
 CREATE INDEX IF NOT EXISTS idx_wear_events_date ON wear_events(date);
 CREATE INDEX IF NOT EXISTS idx_wear_event_items_item ON wear_event_items(item_id);
 CREATE INDEX IF NOT EXISTS idx_maintenance_events_item ON maintenance_events(item_id);
+CREATE INDEX IF NOT EXISTS idx_fragrances_status ON fragrances(status);
+CREATE INDEX IF NOT EXISTS idx_fragrance_notes_frag ON fragrance_notes(fragrance_id);
+CREATE INDEX IF NOT EXISTS idx_fragrance_notes_date ON fragrance_notes(date);
 """
 
 # Properties applied to categories that only exist as bare strings
@@ -680,3 +762,69 @@ def outfits_to_dicts(db, rows):
 def outfit_to_dict(db, row):
     """Single-outfit serialization (kept for existing call sites)."""
     return outfits_to_dicts(db, [row])[0]
+
+
+# ---------------------------------------------------------------- fragrances
+
+CONCENTRATIONS = ["cologne", "edc", "edt", "edp", "parfum", "oil"]
+TIMES_OF_DAY = ["any", "day", "night"]
+SILLAGES = ["intimate", "moderate", "strong"]
+SCENT_STATUSES = ["owned", "tried", "wishlist", "retired"]
+
+
+def clamp_rating(value):
+    """Coerce a rating to 0-5, where 0 means unrated. Junk becomes 0."""
+    try:
+        return max(0, min(5, int(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def normalize_notes(values):
+    """Clean a fragrance note list: trimmed, lower-cased, de-duplicated."""
+    out = []
+    for value in values or []:
+        note = str(value).strip().lower()
+        if note and note not in out:
+            out.append(note)
+    return out
+
+
+def fragrance_to_dict(row, note_counts=None):
+    """Convert a fragrance row to a dict, with the derived fields the UI needs.
+
+    `remaining_pct` is None rather than 0 when the bottle size is unknown, so
+    the UI can tell "I never recorded the size" apart from "it is empty".
+    Pass `note_counts` ({fragrance_id: n}) when serializing a list, so the
+    journal-entry count costs one query rather than one per row.
+    """
+    d = dict(row)
+    for key in ("notes_top", "notes_heart", "notes_base", "season_tags", "vibe_tags"):
+        d[key] = json.loads(d.get(key) or "[]")
+    d["photo_thumb"] = thumb_url_for(d.get("photo") or "")
+
+    size = d.get("size_ml") or 0
+    remaining = d.get("remaining_ml") or 0
+    d["remaining_pct"] = round(max(0.0, remaining) / size * 100) if size > 0 else None
+
+    wears = d.get("lifetime_wears") or 0
+    paid = d.get("paid_price") or 0
+    d["cost_per_wear"] = round(paid / wears, 2) if wears and paid else None
+
+    if note_counts is not None:
+        d["note_count"] = note_counts.get(d["id"], 0)
+    return d
+
+
+def fragrances_to_dicts(db, rows):
+    """Serialize many fragrance rows using one extra query for note counts."""
+    rows = list(rows)
+    if not rows:
+        return []
+    counts = {
+        r["fragrance_id"]: r["n"]
+        for r in db.execute(
+            "SELECT fragrance_id, COUNT(*) AS n FROM fragrance_notes GROUP BY fragrance_id"
+        ).fetchall()
+    }
+    return [fragrance_to_dict(r, note_counts=counts) for r in rows]

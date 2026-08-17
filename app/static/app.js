@@ -38,8 +38,15 @@ const state = {
     aiGenerating: false,
     aiEngine: 'auto',  // 'auto' | 'anthropic' | 'openai' | 'local'
     aiStatus: null,    // cached GET /ai/status ({anthropic, openai, ...})
-    closetSubview: 'closet',  // 'closet' | 'wishlist'
+    closetSubview: 'closet',  // 'closet' | 'wishlist' | 'scents'
     wishlist: [],
+    scents: [],
+    scentFilters: {
+        status: '',
+        search: '',
+        sort: 'rating'
+    },
+    scentSuggestion: null,  // cached GET /scents/suggest for the Today card
     activeTrip: null,  // {id, name, destination, start_date, end_date, item_ids: [...]}
     trips: [],
     tripDetail: null,
@@ -162,7 +169,14 @@ function escapeHtml(str) {
 
 function formatDate(dateStr) {
     if (!dateStr) return 'never';
-    const d = new Date(dateStr);
+    // A bare YYYY-MM-DD is parsed as UTC midnight, which renders as the day
+    // before anywhere west of Greenwich — a wear logged today came back as
+    // yesterday. Build those as a local date instead. (Same reasoning as
+    // localToday(); values that carry a time are left to the normal parser.)
+    const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr).trim());
+    const d = parts
+        ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]))
+        : new Date(dateStr);
     return d.toLocaleDateString();
 }
 
@@ -336,6 +350,16 @@ async function renderTodayView(container) {
         return;
     }
 
+    // Scent pick is a bonus on this screen, not the point of it — a failure
+    // here must not cost the user their outfit suggestions.
+    try {
+        const period = new Date().getHours() >= 17 || new Date().getHours() < 5 ? 'night' : 'day';
+        const occasion = state.selectedVibe === 'any' ? '' : encodeURIComponent(state.selectedVibe);
+        state.scentSuggestion = await api(`/scents/suggest?time_of_day=${period}&occasion=${occasion}&limit=3`);
+    } catch (err) {
+        state.scentSuggestion = null;
+    }
+
     const weather = state.suggestData.weather;
     const outfits = state.suggestData.outfits || [];
     const hiddenRecent = state.suggestData.hidden_recent || 0;
@@ -427,6 +451,7 @@ async function renderTodayView(container) {
         ${renderVacationBanner()}
         ${weatherHtml}
         <div class="chip-row scrollable" id="vibe-picker">${vibeChipsHtml}</div>
+        ${renderScentOfDayCard()}
         <div id="today-outfits">${outfitsHtml}</div>
         ${hiddenRecentHtml}
         ${hiddenRestHtml}
@@ -467,6 +492,69 @@ async function renderTodayView(container) {
             const outfit = outfits.find(o => o.id === outfitId);
             if (outfit) openWearDialog(outfit);
         });
+    });
+
+    setupScentOfDayCard(container);
+}
+
+// Today's scent pick. Renders nothing at all when there are no owned bottles —
+// an empty prompt on the main screen would be noise for someone who only uses
+// the journal to record things tried in shops.
+function renderScentOfDayCard() {
+    const data = state.scentSuggestion;
+    if (!data || !data.owned_count || !data.scents || data.scents.length === 0) return '';
+
+    const pick = data.scents[0];
+    const reason = (pick.reasons || []).slice(0, 2).join(' · ');
+    const subtitle = scentSubtitle(pick);
+
+    const relaxedNote = data.relaxed
+        ? `<div class="scent-today-note">Nothing tagged for ${escapeHtml(data.season)} — showing your closest match</div>`
+        : '';
+
+    return `
+        <div class="scent-today-card" data-scent-id="${pick.id}">
+            <div class="scent-today-label">Scent for today</div>
+            <div class="scent-today-body">
+                <div class="scent-today-thumb">${scentThumbHtml(pick)}</div>
+                <div class="scent-today-info">
+                    <div class="scent-today-name">${escapeHtml(pick.name)}</div>
+                    ${subtitle ? `<div class="scent-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+                    ${starsHtml(pick.rating, 'small')}
+                    ${reason ? `<div class="scent-today-reason">${escapeHtml(reason)}</div>` : ''}
+                </div>
+            </div>
+            ${relaxedNote}
+            <div class="scent-today-actions">
+                <button class="btn btn-sm btn-outline" id="scent-today-open">Details</button>
+                <button class="btn btn-sm btn-primary" id="scent-today-wear">Wore this</button>
+            </div>
+        </div>
+    `;
+}
+
+function setupScentOfDayCard(container) {
+    const card = container.querySelector('.scent-today-card');
+    if (!card) return;
+    const scentId = parseInt(card.dataset.scentId);
+
+    container.querySelector('#scent-today-open')?.addEventListener('click', () => {
+        openScentDetail(scentId);
+    });
+
+    container.querySelector('#scent-today-wear')?.addEventListener('click', async () => {
+        const sprays = state.settings?.scent_rules?.default_sprays ?? 2;
+        try {
+            await api(`/scents/${scentId}/notes`, {
+                method: 'POST',
+                body: { sprays, date: localToday(), note: '' }
+            });
+            state.scentSuggestion = null;
+            toast('Logged — add a note any time from Scents');
+            renderTodayView(container);
+        } catch (err) {
+            toast(err.message, 'error');
+        }
     });
 }
 
@@ -942,21 +1030,30 @@ async function renderClosetView(container) {
         if (state.closetSubview === 'wishlist') {
             state.wishlist = await api('/wishlist');
         }
+        if (state.closetSubview === 'scents') {
+            state.scents = await api(`/scents?sort=${encodeURIComponent(state.scentFilters.sort)}`);
+        }
     } catch (err) {
         container.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
         return;
     }
 
-    // Segmented control for Closet/Wishlist
+    // Segmented control for Closet/Wishlist/Scents
     const segmentedHtml = `
         <div class="segmented-control" id="closet-segment">
             <button class="segment-btn ${state.closetSubview === 'closet' ? 'active' : ''}" data-subview="closet">Closet</button>
             <button class="segment-btn ${state.closetSubview === 'wishlist' ? 'active' : ''}" data-subview="wishlist">Wishlist</button>
+            <button class="segment-btn ${state.closetSubview === 'scents' ? 'active' : ''}" data-subview="scents">Scents</button>
         </div>
     `;
 
     if (state.closetSubview === 'wishlist') {
         renderWishlistView(container, segmentedHtml);
+        return;
+    }
+
+    if (state.closetSubview === 'scents') {
+        renderScentsView(container, segmentedHtml);
         return;
     }
 
@@ -1905,6 +2002,762 @@ function openPhotoActionsModal(item, photoId, photoUrl) {
         } catch (err) {
             toast(err.message, 'error');
         }
+    });
+}
+
+// ========================================
+// SCENTS
+// ========================================
+
+const SCENT_STATUSES = [
+    { value: 'owned', label: 'Owned' },
+    { value: 'tried', label: 'Tried' },
+    { value: 'wishlist', label: 'Wishlist' },
+    { value: 'retired', label: 'Retired' }
+];
+
+const SCENT_CONCENTRATIONS = ['', 'cologne', 'edc', 'edt', 'edp', 'parfum', 'oil'];
+const SCENT_SILLAGES = ['intimate', 'moderate', 'strong'];
+const SCENT_TIMES = ['any', 'day', 'night'];
+
+const SCENT_SORTS = [
+    { value: 'rating', label: 'Top rated' },
+    { value: 'recent', label: 'Recently added' },
+    { value: 'name', label: 'Name' },
+    { value: 'house', label: 'House' },
+    { value: 'worn', label: 'Last worn' }
+];
+
+// Read-only star row. `rating` 0 means no verdict yet, which is shown as empty
+// stars rather than a zero score — the two mean different things.
+function starsHtml(rating, size = '') {
+    const r = Math.max(0, Math.min(5, parseInt(rating) || 0));
+    const stars = [1, 2, 3, 4, 5]
+        .map(n => `<span class="star ${n <= r ? 'filled' : ''}">&#9733;</span>`)
+        .join('');
+    return `<span class="stars ${size}">${stars}</span>`;
+}
+
+// Tappable star row for forms. Reads back via readStarPicker(id).
+function starPickerHtml(id, rating) {
+    const r = Math.max(0, Math.min(5, parseInt(rating) || 0));
+    const stars = [1, 2, 3, 4, 5]
+        .map(n => `<span class="star tappable ${n <= r ? 'filled' : ''}" data-value="${n}">&#9733;</span>`)
+        .join('');
+    return `
+        <div class="star-picker" id="${id}" data-rating="${r}">
+            ${stars}
+            <button type="button" class="star-clear ${r ? '' : 'hidden'}">clear</button>
+        </div>
+    `;
+}
+
+function setupStarPicker(id) {
+    const picker = document.getElementById(id);
+    if (!picker) return;
+    const paint = (value) => {
+        picker.dataset.rating = value;
+        picker.querySelectorAll('.star').forEach(star => {
+            star.classList.toggle('filled', parseInt(star.dataset.value) <= value);
+        });
+        picker.querySelector('.star-clear')?.classList.toggle('hidden', !value);
+    };
+    picker.addEventListener('click', (e) => {
+        if (e.target.closest('.star-clear')) {
+            paint(0);
+            return;
+        }
+        const star = e.target.closest('.star');
+        if (star) paint(parseInt(star.dataset.value));
+    });
+}
+
+function readStarPicker(id) {
+    return parseInt(document.getElementById(id)?.dataset.rating) || 0;
+}
+
+function scentThumbHtml(scent) {
+    if (scent.photo) {
+        const src = bustedPhotoUrl(scent.photo_thumb || scent.photo, `scent-${scent.id}`);
+        return `<img src="${escapeHtml(src)}" alt="${escapeHtml(scent.name)}" loading="lazy">`;
+    }
+    // Bottle silhouette beats a broken-image box for a collection that will
+    // mostly be photo-less — you journal a shop sample, you don't photograph it.
+    return `
+        <svg class="scent-placeholder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M10 2h4v3h-4z"/>
+            <path d="M9 5h6a3 3 0 013 3v11a3 3 0 01-3 3H9a3 3 0 01-3-3V8a3 3 0 013-3z"/>
+            <path d="M6 12h12"/>
+        </svg>
+    `;
+}
+
+function scentSubtitle(scent) {
+    // House and concentration are the identifying pair; skip the separator when
+    // only one is recorded so nothing renders as a stray bullet.
+    return [scent.house, (scent.concentration || '').toUpperCase()]
+        .filter(Boolean).join(' · ');
+}
+
+async function renderScentsView(container, segmentedHtml) {
+    const scents = state.scents || [];
+    const filters = state.scentFilters;
+
+    let filtered = scents;
+    if (filters.status) {
+        filtered = filtered.filter(s => (s.status || 'owned') === filters.status);
+    }
+    if (filters.search) {
+        const q = filters.search.toLowerCase();
+        filtered = filtered.filter(s =>
+            (s.name || '').toLowerCase().includes(q) ||
+            (s.house || '').toLowerCase().includes(q) ||
+            (s.family || '').toLowerCase().includes(q) ||
+            (s.impression || '').toLowerCase().includes(q) ||
+            [...(s.notes_top || []), ...(s.notes_heart || []), ...(s.notes_base || [])]
+                .some(n => n.includes(q))
+        );
+    }
+
+    const statusChipsHtml = [{ value: '', label: 'All' }, ...SCENT_STATUSES].map(s => {
+        const count = s.value
+            ? scents.filter(x => (x.status || 'owned') === s.value).length
+            : scents.length;
+        return `<span class="chip ${filters.status === s.value ? 'active' : ''}" data-scent-status="${s.value}">${s.label}${count ? ` ${count}` : ''}</span>`;
+    }).join('');
+
+    const sortOptions = SCENT_SORTS.map(s =>
+        `<option value="${s.value}" ${filters.sort === s.value ? 'selected' : ''}>${s.label}</option>`
+    ).join('');
+
+    let listHtml;
+    if (scents.length === 0) {
+        listHtml = `
+            <div class="empty-state">
+                <div class="empty-state-text">
+                    No scents yet.<br>Add one you've tried and write down what you thought.
+                </div>
+            </div>
+        `;
+    } else if (filtered.length === 0) {
+        listHtml = '<div class="empty-state"><div class="empty-state-text">Nothing matches those filters</div></div>';
+    } else {
+        listHtml = `<div class="scent-list">${filtered.map(renderScentCard).join('')}</div>`;
+    }
+
+    container.innerHTML = `
+        ${segmentedHtml}
+        <div class="search-bar">
+            <input type="text" placeholder="Search scents, houses, notes..." id="scent-search" value="${escapeHtml(filters.search)}">
+        </div>
+        <div class="chip-row scrollable" id="scent-status-filter">${statusChipsHtml}</div>
+        <div class="scent-toolbar">
+            <select class="form-select scent-sort" id="scent-sort">${sortOptions}</select>
+            <button class="btn btn-sm btn-outline" id="scent-journal-btn">Journal</button>
+        </div>
+        ${listHtml}
+        <button class="fab" id="add-scent-btn">+</button>
+    `;
+
+    document.getElementById('closet-segment').addEventListener('click', (e) => {
+        const btn = e.target.closest('.segment-btn');
+        if (!btn) return;
+        state.closetSubview = btn.dataset.subview;
+        renderClosetView(container);
+    });
+
+    document.getElementById('scent-search').addEventListener('input', (e) => {
+        state.scentFilters.search = e.target.value;
+        renderScentsView(container, segmentedHtml);
+    });
+
+    document.getElementById('scent-status-filter').addEventListener('click', (e) => {
+        const chip = e.target.closest('.chip');
+        if (!chip) return;
+        state.scentFilters.status = chip.dataset.scentStatus;
+        renderScentsView(container, segmentedHtml);
+    });
+
+    // Sorting is done by the server, so this re-fetches rather than re-filters.
+    document.getElementById('scent-sort').addEventListener('change', (e) => {
+        state.scentFilters.sort = e.target.value;
+        renderClosetView(container);
+    });
+
+    document.getElementById('scent-journal-btn').addEventListener('click', () => {
+        openScentJournalModal();
+    });
+
+    container.querySelectorAll('.scent-card').forEach(card => {
+        card.addEventListener('click', () => {
+            openScentDetail(parseInt(card.dataset.scentId));
+        });
+    });
+
+    document.getElementById('add-scent-btn').addEventListener('click', () => {
+        openScentModal(null);
+    });
+}
+
+function renderScentCard(scent) {
+    const status = scent.status || 'owned';
+    const statusLabel = SCENT_STATUSES.find(s => s.value === status)?.label || status;
+    // "Owned" is the default and would be a badge on almost every card, so it
+    // stays implicit; the other three are the ones worth calling out.
+    const statusBadge = status === 'owned'
+        ? ''
+        : `<span class="scent-badge status-${status}">${escapeHtml(statusLabel)}</span>`;
+
+    const subtitle = scentSubtitle(scent);
+    const impression = (scent.impression || '').trim();
+    const noteCount = scent.note_count || 0;
+
+    const meta = [];
+    if (scent.family) meta.push(escapeHtml(scent.family));
+    if (noteCount) meta.push(`${noteCount} ${noteCount === 1 ? 'entry' : 'entries'}`);
+    if (status === 'owned' && scent.remaining_pct !== null && scent.remaining_pct !== undefined) {
+        meta.push(`${scent.remaining_pct}% left`);
+    }
+
+    return `
+        <div class="scent-card" data-scent-id="${scent.id}">
+            <div class="scent-thumb">${scentThumbHtml(scent)}</div>
+            <div class="scent-info">
+                <div class="scent-name-row">
+                    <span class="scent-name">${escapeHtml(scent.name)}</span>
+                    ${statusBadge}
+                </div>
+                ${subtitle ? `<div class="scent-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+                ${starsHtml(scent.rating, 'small')}
+                ${impression ? `<div class="scent-impression">${escapeHtml(impression)}</div>` : ''}
+                ${meta.length ? `<div class="scent-meta">${meta.join(' · ')}</div>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+// ---- Detail: rating, impression, and the journal --------------------------
+
+async function openScentDetail(scentId) {
+    let scent;
+    try {
+        scent = await api(`/scents/${scentId}`);
+    } catch (err) {
+        toast(err.message, 'error');
+        return;
+    }
+
+    const entries = scent.notes || [];
+    const subtitle = scentSubtitle(scent);
+
+    const pyramid = [
+        ['Top', scent.notes_top],
+        ['Heart', scent.notes_heart],
+        ['Base', scent.notes_base]
+    ].filter(([, notes]) => notes && notes.length);
+
+    const pyramidHtml = pyramid.length ? `
+        <div class="scent-pyramid">
+            ${pyramid.map(([label, notes]) => `
+                <div class="pyramid-row">
+                    <span class="pyramid-label">${label}</span>
+                    <span class="pyramid-notes">${notes.map(n => `<span class="chip small">${escapeHtml(n)}</span>`).join('')}</span>
+                </div>
+            `).join('')}
+        </div>
+    ` : '';
+
+    const facts = [];
+    if (scent.family) facts.push(['Family', scent.family]);
+    if (scent.sillage) facts.push(['Sillage', scent.sillage]);
+    if (scent.time_of_day && scent.time_of_day !== 'any') facts.push(['Best', scent.time_of_day]);
+    if (scent.longevity_hours) facts.push(['Longevity', `${scent.longevity_hours}h`]);
+    if (scent.size_ml) {
+        const left = scent.remaining_pct !== null && scent.remaining_pct !== undefined
+            ? ` (${scent.remaining_pct}% left)` : '';
+        facts.push(['Bottle', `${scent.size_ml}ml${left}`]);
+    }
+    if (scent.paid_price) facts.push(['Paid', formatCurrency(scent.paid_price)]);
+    if (scent.lifetime_wears) facts.push(['Worn', `${scent.lifetime_wears}x`]);
+    if (scent.cost_per_wear) facts.push(['Per wear', formatCurrency(scent.cost_per_wear)]);
+    if (scent.last_worn) facts.push(['Last worn', formatDate(scent.last_worn)]);
+
+    const factsHtml = facts.length ? `
+        <div class="scent-facts">
+            ${facts.map(([k, v]) => `<div class="scent-fact"><span class="fact-key">${escapeHtml(k)}</span><span class="fact-value">${escapeHtml(v)}</span></div>`).join('')}
+        </div>
+    ` : '';
+
+    const entriesHtml = entries.length
+        ? entries.map(entry => `
+            <div class="journal-entry" data-note-id="${entry.id}">
+                <div class="journal-entry-head">
+                    <span class="journal-date">${formatDate(entry.date)}</span>
+                    ${entry.rating ? starsHtml(entry.rating, 'small') : ''}
+                    ${entry.sprays ? `<span class="journal-sprays">${entry.sprays} spray${entry.sprays === 1 ? '' : 's'}</span>` : ''}
+                    <button class="journal-delete" data-note-id="${entry.id}" title="Delete entry">&times;</button>
+                </div>
+                ${entry.note ? `<div class="journal-note">${escapeHtml(entry.note)}</div>` : ''}
+            </div>
+        `).join('')
+        : '<div class="journal-empty">No entries yet. Write the first one below.</div>';
+
+    const seasonTags = scent.season_tags || [];
+    const vibeTags = scent.vibe_tags || [];
+
+    openModal(`
+        <div class="modal-header">
+            <span class="modal-title">${escapeHtml(scent.name)}</span>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="scent-detail-head">
+                <div class="scent-detail-thumb">${scentThumbHtml(scent)}</div>
+                <div class="scent-detail-title">
+                    ${subtitle ? `<div class="scent-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+                    <div class="scent-detail-status">${escapeHtml(SCENT_STATUSES.find(s => s.value === (scent.status || 'owned'))?.label || '')}</div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Your rating</label>
+                ${starPickerHtml('scent-detail-rating', scent.rating)}
+                <div class="form-hint">Tap to rate — saves immediately</div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Impression</label>
+                <textarea class="form-textarea" id="scent-impression" rows="3"
+                          placeholder="How does it smell on you? When would you wear it?">${escapeHtml(scent.impression || '')}</textarea>
+                <button class="btn btn-sm btn-outline mt-sm" id="save-impression-btn">Save impression</button>
+            </div>
+
+            ${pyramidHtml}
+            ${(seasonTags.length || vibeTags.length) ? `
+                <div class="chip-row">${renderTagChips([...seasonTags, ...vibeTags], true)}</div>
+            ` : ''}
+            ${factsHtml}
+
+            <div class="journal-section">
+                <div class="journal-header">Journal</div>
+                <div id="journal-entries">${entriesHtml}</div>
+
+                <div class="journal-add">
+                    <textarea class="form-textarea" id="new-note-text" rows="2"
+                              placeholder="Add an entry — how it wore today, second thoughts, where you tried it..."></textarea>
+                    <div class="journal-add-row">
+                        ${starPickerHtml('new-note-rating', 0)}
+                    </div>
+                    <div class="journal-add-row">
+                        <label class="journal-inline-label">Date</label>
+                        <input type="date" class="form-input" id="new-note-date" value="${localToday()}">
+                        <label class="journal-inline-label">Sprays</label>
+                        <input type="number" class="form-input journal-sprays-input" id="new-note-sprays"
+                               min="0" max="20" value="0">
+                    </div>
+                    <div class="form-hint">Sprays above zero logs it as worn and draws down the bottle.</div>
+                    <button class="btn btn-primary btn-block mt-sm" id="add-note-btn">Add entry</button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" id="edit-scent-btn">Edit</button>
+            <button class="btn btn-danger" id="delete-scent-btn">Delete</button>
+        </div>
+    `, true);
+
+    setupStarPicker('scent-detail-rating');
+    setupStarPicker('new-note-rating');
+
+    const refresh = async () => {
+        state.scents = await api(`/scents?sort=${encodeURIComponent(state.scentFilters.sort)}`);
+        state.scentSuggestion = null;   // today's pick may have changed
+    };
+
+    // Rating saves on tap. Rating something is the single most common action
+    // here, so it should not need a separate Save press.
+    document.getElementById('scent-detail-rating').addEventListener('click', async (e) => {
+        if (!e.target.closest('.star') && !e.target.closest('.star-clear')) return;
+        try {
+            await api(`/scents/${scent.id}`, {
+                method: 'PATCH',
+                body: { rating: readStarPicker('scent-detail-rating') }
+            });
+            await refresh();
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+
+    document.getElementById('save-impression-btn').addEventListener('click', async () => {
+        try {
+            await api(`/scents/${scent.id}`, {
+                method: 'PATCH',
+                body: { impression: document.getElementById('scent-impression').value }
+            });
+            await refresh();
+            toast('Impression saved');
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+
+    document.getElementById('add-note-btn').addEventListener('click', async () => {
+        const note = document.getElementById('new-note-text').value.trim();
+        const rating = readStarPicker('new-note-rating');
+        const sprays = parseInt(document.getElementById('new-note-sprays').value) || 0;
+        const date = document.getElementById('new-note-date').value || localToday();
+
+        if (!note && !rating && !sprays) {
+            toast('Write something, rate it, or log a spray', 'error');
+            return;
+        }
+
+        try {
+            await api(`/scents/${scent.id}/notes`, {
+                method: 'POST',
+                body: { note, rating, sprays, date }
+            });
+            await refresh();
+            toast('Entry added');
+            openScentDetail(scent.id);
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+
+    document.getElementById('journal-entries').addEventListener('click', async (e) => {
+        const btn = e.target.closest('.journal-delete');
+        if (!btn) return;
+        if (!confirm('Delete this journal entry?')) return;
+        try {
+            await api(`/scents/${scent.id}/notes/${btn.dataset.noteId}`, { method: 'DELETE' });
+            await refresh();
+            toast('Entry deleted');
+            openScentDetail(scent.id);
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+
+    document.getElementById('edit-scent-btn').addEventListener('click', () => {
+        openScentModal(scent);
+    });
+
+    document.getElementById('delete-scent-btn').addEventListener('click', async () => {
+        if (!confirm(`Delete ${scent.name} and all its journal entries? This cannot be undone.`)) return;
+        try {
+            await api(`/scents/${scent.id}`, { method: 'DELETE' });
+            closeModal();
+            toast('Scent deleted');
+            renderClosetView(document.getElementById('main-content'));
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+}
+
+// ---- Add / edit form ------------------------------------------------------
+
+function openScentModal(scent) {
+    const isNew = !scent;
+    const seasonTags = state.settings?.season_tags || [];
+    const vibeTags = state.settings?.vibe_tags || [];
+    const families = state.settings?.fragrance_families || [];
+
+    const statusOptions = SCENT_STATUSES.map(s =>
+        `<option value="${s.value}" ${(scent?.status || 'owned') === s.value ? 'selected' : ''}>${s.label}</option>`
+    ).join('');
+
+    const concentrationOptions = SCENT_CONCENTRATIONS.map(c =>
+        `<option value="${c}" ${(scent?.concentration || '') === c ? 'selected' : ''}>${c ? c.toUpperCase() : '—'}</option>`
+    ).join('');
+
+    const familyOptions = ['', ...families].map(f =>
+        `<option value="${escapeHtml(f)}" ${(scent?.family || '') === f ? 'selected' : ''}>${f || '—'}</option>`
+    ).join('');
+
+    const sillageOptions = SCENT_SILLAGES.map(s =>
+        `<option value="${s}" ${(scent?.sillage || 'moderate') === s ? 'selected' : ''}>${s}</option>`
+    ).join('');
+
+    const timeOptions = SCENT_TIMES.map(t =>
+        `<option value="${t}" ${(scent?.time_of_day || 'any') === t ? 'selected' : ''}>${t}</option>`
+    ).join('');
+
+    const seasonChipsHtml = seasonTags.map(t =>
+        `<span class="chip ${scent?.season_tags?.includes(t) ? 'active' : ''}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`
+    ).join('');
+
+    const vibeChipsHtml = vibeTags.map(t =>
+        `<span class="chip ${scent?.vibe_tags?.includes(t) ? 'active' : ''}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`
+    ).join('');
+
+    const houseOptions = datalistOptionsHtml(
+        Array.from(new Set((state.scents || []).map(s => s.house).filter(Boolean))).sort()
+    );
+
+    openModal(`
+        <div class="modal-header">
+            <span class="modal-title">${isNew ? 'Add Scent' : 'Edit Scent'}</span>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="scent-form">
+                <div class="form-group">
+                    <label class="form-label">Name *</label>
+                    <input type="text" class="form-input" name="name" required
+                           value="${escapeHtml(scent?.name || '')}" placeholder="e.g. Bleu de Chanel">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">House</label>
+                        <input type="text" class="form-input" name="house" list="scent-house-options"
+                               value="${escapeHtml(scent?.house || '')}">
+                        <datalist id="scent-house-options">${houseOptions}</datalist>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" name="status">${statusOptions}</select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Rating</label>
+                    ${starPickerHtml('scent-form-rating', scent?.rating)}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Impression</label>
+                    <textarea class="form-textarea" name="impression" rows="3"
+                              placeholder="What did you think? Opening, dry-down, where it fits.">${escapeHtml(scent?.impression || '')}</textarea>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Family</label>
+                        <select class="form-select" name="family">${familyOptions}</select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Concentration</label>
+                        <select class="form-select" name="concentration">${concentrationOptions}</select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Notes — top</label>
+                    <input type="text" class="form-input" name="notes_top"
+                           value="${escapeHtml((scent?.notes_top || []).join(', '))}"
+                           placeholder="bergamot, grapefruit">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notes — heart</label>
+                    <input type="text" class="form-input" name="notes_heart"
+                           value="${escapeHtml((scent?.notes_heart || []).join(', '))}"
+                           placeholder="lavender, jasmine">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notes — base</label>
+                    <input type="text" class="form-input" name="notes_base"
+                           value="${escapeHtml((scent?.notes_base || []).join(', '))}"
+                           placeholder="sandalwood, amber">
+                    <div class="form-hint">Comma separated</div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Season</label>
+                    <div class="chip-row" id="scent-season-picker">${seasonChipsHtml}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Occasion</label>
+                    <div class="chip-row" id="scent-vibe-picker">${vibeChipsHtml}</div>
+                    <div class="form-hint">Untagged means it's suggested for anything.</div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Sillage</label>
+                        <select class="form-select" name="sillage">${sillageOptions}</select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Best for</label>
+                        <select class="form-select" name="time_of_day">${timeOptions}</select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Bottle (ml)</label>
+                        <input type="number" step="1" class="form-input" name="size_ml"
+                               value="${scent?.size_ml || ''}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Paid</label>
+                        <input type="number" step="0.01" class="form-input" name="paid_price"
+                               value="${scent?.paid_price || ''}">
+                    </div>
+                </div>
+                ${!isNew && scent?.size_ml ? `
+                    <div class="form-group">
+                        <label class="form-label">Remaining (ml)</label>
+                        <input type="number" step="0.1" class="form-input" name="remaining_ml"
+                               value="${scent?.remaining_ml ?? ''}">
+                        <div class="form-hint">Corrects the estimate if it has drifted from the real bottle.</div>
+                    </div>
+                ` : ''}
+
+                <div class="form-group">
+                    <label class="form-label">Longevity (hours)</label>
+                    <input type="number" step="0.5" class="form-input" name="longevity_hours"
+                           value="${scent?.longevity_hours || ''}">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">${scent?.photo ? 'Replace photo' : 'Photo'}</label>
+                    <div class="file-input-wrapper">
+                        <input type="file" class="file-input" accept="image/*" id="scent-photo-input">
+                        <div class="file-input-btn"><span>Tap to take or choose photo</span></div>
+                    </div>
+                    <img class="file-preview hidden" id="scent-photo-preview">
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            ${scent?.photo ? '<button class="btn btn-outline" id="remove-scent-photo-btn">Remove photo</button>' : ''}
+            <button class="btn btn-primary" id="save-scent-btn">Save</button>
+        </div>
+    `, true);
+
+    setupStarPicker('scent-form-rating');
+
+    ['scent-season-picker', 'scent-vibe-picker'].forEach(id => {
+        document.getElementById(id)?.addEventListener('click', (e) => {
+            const chip = e.target.closest('.chip');
+            if (chip) chip.classList.toggle('active');
+        });
+    });
+
+    document.getElementById('scent-photo-input').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const preview = document.getElementById('scent-photo-preview');
+        preview.src = URL.createObjectURL(file);
+        preview.classList.remove('hidden');
+    });
+
+    document.getElementById('remove-scent-photo-btn')?.addEventListener('click', async () => {
+        try {
+            await api(`/scents/${scent.id}/photo`, { method: 'DELETE' });
+            closeModal();
+            toast('Photo removed');
+            renderClosetView(document.getElementById('main-content'));
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+
+    document.getElementById('save-scent-btn').addEventListener('click', async () => {
+        const form = document.getElementById('scent-form');
+        const formData = new FormData(form);
+
+        const name = (formData.get('name') || '').trim();
+        if (!name) {
+            toast('Name is required', 'error');
+            return;
+        }
+
+        const splitNotes = (value) =>
+            (value || '').split(',').map(n => n.trim()).filter(Boolean);
+
+        const data = {
+            name,
+            house: formData.get('house') || '',
+            status: formData.get('status') || 'owned',
+            rating: readStarPicker('scent-form-rating'),
+            impression: formData.get('impression') || '',
+            family: formData.get('family') || '',
+            concentration: formData.get('concentration') || '',
+            notes_top: splitNotes(formData.get('notes_top')),
+            notes_heart: splitNotes(formData.get('notes_heart')),
+            notes_base: splitNotes(formData.get('notes_base')),
+            sillage: formData.get('sillage') || 'moderate',
+            time_of_day: formData.get('time_of_day') || 'any',
+            size_ml: parseFloat(formData.get('size_ml')) || 0,
+            paid_price: parseFloat(formData.get('paid_price')) || 0,
+            longevity_hours: parseFloat(formData.get('longevity_hours')) || 0,
+            season_tags: Array.from(document.querySelectorAll('#scent-season-picker .chip.active')).map(el => el.dataset.tag),
+            vibe_tags: Array.from(document.querySelectorAll('#scent-vibe-picker .chip.active')).map(el => el.dataset.tag)
+        };
+
+        const remainingRaw = formData.get('remaining_ml');
+        if (remainingRaw !== null && remainingRaw !== '') {
+            data.remaining_ml = parseFloat(remainingRaw) || 0;
+        }
+
+        try {
+            const saved = isNew
+                ? await api('/scents', { method: 'POST', body: data })
+                : await api(`/scents/${scent.id}`, { method: 'PATCH', body: data });
+
+            const photoInput = document.getElementById('scent-photo-input');
+            if (photoInput.files[0]) {
+                const photoForm = new FormData();
+                photoForm.append('file', photoInput.files[0]);
+                await api(`/scents/${saved.id}/photo`, { method: 'POST', body: photoForm });
+                // The filename never changes, so the browser would keep serving
+                // the previous bottle photo without a bust token.
+                state.photoBust[`scent-${saved.id}`] = Date.now();
+            }
+
+            state.scentSuggestion = null;
+            closeModal();
+            toast(isNew ? 'Scent added' : 'Scent updated');
+            renderClosetView(document.getElementById('main-content'));
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+}
+
+// ---- Cross-scent journal feed --------------------------------------------
+
+async function openScentJournalModal() {
+    openModal(`
+        <div class="modal-header">
+            <span class="modal-title">Scent Journal</span>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body"><div class="flex-center"><div class="spinner"></div></div></div>
+    `, true);
+
+    let entries;
+    try {
+        entries = await api('/scents/journal/recent?limit=50');
+    } catch (err) {
+        toast(err.message, 'error');
+        closeModal();
+        return;
+    }
+
+    const body = document.querySelector('#modal-container .modal-body');
+    if (!body) return;
+
+    if (entries.length === 0) {
+        body.innerHTML = '<div class="empty-state"><div class="empty-state-text">No journal entries yet</div></div>';
+        return;
+    }
+
+    body.innerHTML = entries.map(entry => `
+        <div class="journal-entry feed" data-scent-id="${entry.fragrance_id}">
+            <div class="journal-entry-head">
+                <span class="journal-scent-name">${escapeHtml(entry.scent_name)}</span>
+                <span class="journal-date">${formatDate(entry.date)}</span>
+                ${entry.rating ? starsHtml(entry.rating, 'small') : ''}
+            </div>
+            ${entry.note ? `<div class="journal-note">${escapeHtml(entry.note)}</div>` : ''}
+        </div>
+    `).join('');
+
+    body.querySelectorAll('.journal-entry.feed').forEach(el => {
+        el.addEventListener('click', () => openScentDetail(parseInt(el.dataset.scentId)));
     });
 }
 
