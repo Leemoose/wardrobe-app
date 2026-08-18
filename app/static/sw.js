@@ -1,5 +1,5 @@
 // Wardrobe PWA Service Worker
-const CACHE_NAME = 'wardrobe-v15';
+const CACHE_NAME = 'wardrobe-v16';
 
 const STATIC_ASSETS = [
     '/',
@@ -39,7 +39,16 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Fetch: cache-first for static, network-only for API and photos
+// True for the request that loads the page itself.
+// `mode: 'navigate'` covers launching the PWA and any in-app navigation.
+function isDocumentRequest(request) {
+    return request.mode === 'navigate' ||
+        (request.method === 'GET' &&
+         (request.headers.get('accept') || '').includes('text/html'));
+}
+
+// Fetch: network-first for the document, cache-first for other static assets,
+// network-only for API and photos.
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
@@ -55,7 +64,39 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Cache-first for static assets
+    // Never serve the worker itself from the cache: a stale copy would keep
+    // re-installing the version that cached it and no deploy could land.
+    if (url.pathname === '/sw.js') {
+        event.respondWith(fetch(event.request));
+        return;
+    }
+
+    // The document is network-first. Cache-first here is what strands a
+    // deploy: the HTML is what names the ?v= of the script and stylesheet, so
+    // serving it from cache pins the app to the asset versions that shipped
+    // with it and the cache-busting query can never take effect. Falling back
+    // to the cache keeps the app usable with no network.
+    if (isDocumentRequest(event.request)) {
+        event.respondWith(
+            fetch(event.request)
+                .then((response) => {
+                    if (response && response.status === 200) {
+                        const copy = response.clone();
+                        caches.open(CACHE_NAME).then((cache) => {
+                            cache.put(event.request, copy);
+                        });
+                    }
+                    return response;
+                })
+                .catch(() => caches.match(event.request)
+                    .then((cached) => cached || caches.match('/index.html')))
+        );
+        return;
+    }
+
+    // Cache-first for everything else. Safe because app.js and style.css are
+    // requested with a ?v= that changes when they do, so a new version is a
+    // cache miss and gets fetched.
     event.respondWith(
         caches.match(event.request)
             .then((cachedResponse) => {
