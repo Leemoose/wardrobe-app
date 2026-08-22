@@ -134,7 +134,12 @@ The bottom bar went from eight tabs to six. Nothing was removed; two things move
   Backup stay open, since they're a link and two download buttons rather than
   settings.
 
-**Note:** v2.0 updates the service worker cache to `wardrobe-v18`; hard-refresh after upgrading.
+- **A count on the Care tab** — The Care icon carries a small red count of
+  everything waiting inside it — items past their wash threshold plus items with
+  a maintenance task due. It's there from launch without opening the tab, and it
+  updates as you wear, wash, and log care. No count, no badge.
+
+**Note:** v2.0 updates the service worker cache to `wardrobe-v19`; hard-refresh after upgrading.
 
 ---
 

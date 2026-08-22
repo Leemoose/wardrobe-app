@@ -688,6 +688,7 @@ function openWearDialog(outfit) {
                     items: itemData
                 }
             });
+            refreshCareBadge();
             // Show photo upload follow-up prompt
             showWearPhotoPrompt(result.event_id, outfit);
         } catch (err) {
@@ -1008,6 +1009,7 @@ async function openWoreElseModal() {
 
         try {
             const result = await api('/wear', { method: 'POST', body });
+            refreshCareBadge();
             // Show photo upload follow-up prompt
             showWearPhotoPrompt(result.event_id, result.created_outfit || null);
         } catch (err) {
@@ -3286,6 +3288,32 @@ async function openOutfitModal(outfit) {
 // Laundry and Maintenance are two halves of one Care tab. Each half renders
 // the segmented control itself (rather than taking it as an argument) because
 // both re-render themselves wholesale from several places.
+// The Care tab badge is the only thing on screen that says care is waiting
+// when you're anywhere else in the app, so it has to stay current without the
+// tab being open. Everything that can change either count calls
+// refreshCareBadge(); the Care views themselves call updateCareTabBadge()
+// directly, since they've just loaded the real numbers anyway.
+function updateCareTabBadge() {
+    const el = document.getElementById('care-tab-badge');
+    if (!el) return;
+    const { dirty, due } = state.careCounts;
+    const total = (dirty || 0) + (due || 0);
+    el.textContent = total > 99 ? '99+' : String(total);
+    el.setAttribute('aria-label', `${total} item${total === 1 ? '' : 's'} needing care`);
+    el.classList.toggle('hidden', total === 0);
+}
+
+async function refreshCareBadge() {
+    try {
+        const summary = await api('/care/summary');
+        state.careCounts.dirty = summary.dirty;
+        state.careCounts.due = summary.due;
+        updateCareTabBadge();
+    } catch (err) {
+        // A stale badge is better than a broken view; never surface this.
+    }
+}
+
 function careSegmentHtml() {
     // A count on the half you are not looking at is the only thing telling you
     // it needs you — neither half is visible from the other, and Today shows
@@ -3310,18 +3338,10 @@ function wireCareSegment(container) {
 
 async function renderCareView(container) {
     const onMaintenance = state.careSubview === 'maintenance';
-    // Each half sets its own badge count from data it already loads, so only
-    // the count for the half you are *not* on needs a request. Badges are
-    // decoration: a failure here leaves the previous count and renders anyway.
-    try {
-        if (onMaintenance) {
-            state.careCounts.dirty = (await api('/laundry/dirty')).length;
-        } else {
-            state.careCounts.due = (await api('/care/due')).count || 0;
-        }
-    } catch (err) {
-        /* keep whatever count we last had */
-    }
+    // One cheap counts-only request covers both segments and the tab badge.
+    // Each half then refreshes its own count from the data it loads anyway, so
+    // acting on something updates the numbers without another round trip.
+    await refreshCareBadge();
 
     if (onMaintenance) {
         await renderMaintenanceView(container);
@@ -3337,6 +3357,7 @@ async function renderLaundryView(container) {
     try {
         state.dirtyItems = await api('/laundry/dirty');
         state.careCounts.dirty = state.dirtyItems.length;
+        updateCareTabBadge();
     } catch (err) {
         container.innerHTML = `${careSegmentHtml()}<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
         wireCareSegment(container);
@@ -3873,6 +3894,7 @@ function showDayWears(dateStr) {
                 closeModal();
                 const reversedCount = result.reversed_items?.length || 0;
                 toast(`Wear undone! ${reversedCount} item(s) reversed.`);
+                refreshCareBadge();
                 // Refresh stats view
                 renderStatsView(document.getElementById('main-content'));
             } catch (err) {
@@ -5213,6 +5235,7 @@ async function renderMaintenanceView(container) {
         const dueCount = dueData.count || 0;
         const dueItems = dueData.items || [];
         state.careCounts.due = dueCount;
+        updateCareTabBadge();
 
         let dueHtml = '';
         if (dueCount === 0) {
@@ -5477,6 +5500,8 @@ async function openGuideModal(guideId) {
 }
 
 async function openItemCareModal(itemId) {
+    // Logging a task in here can clear a due item, and this modal opens from
+    // Closet as well as from Care, so the badge has to be told either way.
     try {
         const careData = await api(`/items/${itemId}/care`);
         const item = careData.item;
@@ -5609,6 +5634,7 @@ async function openItemCareModal(itemId) {
                     body: { task: desc, kind, cost, notes, date: localToday() }
                 });
                 toast('Logged!');
+                refreshCareBadge();
                 openItemCareModal(itemId);
             } catch (err) {
                 toast(err.message, 'error');
@@ -5634,6 +5660,7 @@ async function openItemCareModal(itemId) {
                         body: { task, date: localToday(), notes: notes || '' }
                     });
                     toast('Care task logged!');
+                    refreshCareBadge();
                     openItemCareModal(itemId);
                 } catch (err) {
                     toast(err.message, 'error');
@@ -5649,6 +5676,7 @@ async function openItemCareModal(itemId) {
                 try {
                     await api(`/care/log/${eventId}`, { method: 'DELETE' });
                     toast('Care log entry deleted');
+                    refreshCareBadge();
                     openItemCareModal(itemId);
                 } catch (err) {
                     toast(err.message, 'error');
@@ -5681,6 +5709,7 @@ function init() {
     initTabs();
     updateActiveTab();
     renderCurrentView();
+    refreshCareBadge();
 }
 
 document.addEventListener('DOMContentLoaded', init);

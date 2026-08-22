@@ -236,6 +236,58 @@ def delete_maintenance(event_id: int):
 # Due list
 # ----------------------------------------------------------------------
 
+def _due_entries(db, lifecycle: Optional[str] = "active"):
+    """
+    Items with at least one maintenance task currently due, most overdue first.
+
+    Split out of the /care/due handler so /care/summary can count the same
+    items without also paying to serialize them.
+    """
+    query = "SELECT * FROM items"
+    params = []
+    if lifecycle:
+        query += " WHERE lifecycle = ?"
+        params.append(lifecycle)
+    rows = db.execute(query, params).fetchall()
+
+    items = items_to_dicts(rows, db)
+    maint_map, wear_map = _care_prefetch(db, [i["id"] for i in items])
+
+    due_items = []
+    for item in items:
+        guides = match_guides(item.get("materials", []), item.get("category"))
+        if not guides:
+            continue
+        tasks = _task_statuses(
+            item["id"], guides, maint_map[item["id"]], wear_map[item["id"]]
+        )
+        due_tasks = [t for t in tasks if t["due"]]
+        if due_tasks:
+            due_items.append({
+                "item": {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "category": item["category"],
+                    "materials": item.get("materials", []),
+                    "photo": item.get("photo"),
+                },
+                "due_tasks": due_tasks,
+            })
+
+    # Most overdue first (by max wears_since or days_since ratio)
+    def overdue_score(entry):
+        best = 0.0
+        for t in entry["due_tasks"]:
+            if t["every_wears"] and t["wears_since"] is not None:
+                best = max(best, t["wears_since"] / t["every_wears"])
+            if t["every_days"] and t["days_since"] is not None:
+                best = max(best, t["days_since"] / t["every_days"])
+        return -best
+
+    due_items.sort(key=overdue_score)
+    return due_items
+
+
 @router.get("/care/due")
 def care_due(lifecycle: Optional[str] = "active"):
     """
@@ -243,49 +295,24 @@ def care_due(lifecycle: Optional[str] = "active"):
     Only considers items matching the given lifecycle (default: active).
     """
     with get_db() as db:
-        query = "SELECT * FROM items"
-        params = []
-        if lifecycle:
-            query += " WHERE lifecycle = ?"
-            params.append(lifecycle)
-        rows = db.execute(query, params).fetchall()
-
-        items = items_to_dicts(rows, db)
-        maint_map, wear_map = _care_prefetch(db, [i["id"] for i in items])
-
-        due_items = []
-        for item in items:
-            guides = match_guides(item.get("materials", []), item.get("category"))
-            if not guides:
-                continue
-            tasks = _task_statuses(
-                item["id"], guides, maint_map[item["id"]], wear_map[item["id"]]
-            )
-            due_tasks = [t for t in tasks if t["due"]]
-            if due_tasks:
-                due_items.append({
-                    "item": {
-                        "id": item["id"],
-                        "name": item["name"],
-                        "category": item["category"],
-                        "materials": item.get("materials", []),
-                        "photo": item.get("photo"),
-                    },
-                    "due_tasks": due_tasks,
-                })
-
-        # Most overdue first (by max wears_since or days_since ratio)
-        def overdue_score(entry):
-            best = 0.0
-            for t in entry["due_tasks"]:
-                if t["every_wears"] and t["wears_since"] is not None:
-                    best = max(best, t["wears_since"] / t["every_wears"])
-                if t["every_days"] and t["days_since"] is not None:
-                    best = max(best, t["days_since"] / t["every_days"])
-            return -best
-
-        due_items.sort(key=overdue_score)
+        due_items = _due_entries(db, lifecycle)
         return {"count": len(due_items), "items": due_items}
+
+
+@router.get("/care/summary")
+def care_summary():
+    """
+    Just the two counts behind the Care tab badge and its segments.
+
+    The badge is refreshed after anything that could change it, so it wants the
+    numbers without the item payloads that /care/due and /laundry/dirty carry.
+    """
+    with get_db() as db:
+        dirty = db.execute(
+            "SELECT COUNT(*) FROM items WHERE status = 'dirty' AND lifecycle = 'active'"
+        ).fetchone()[0]
+        due = len(_due_entries(db, "active"))
+        return {"dirty": dirty, "due": due, "total": dirty + due}
 
 
 # ----------------------------------------------------------------------

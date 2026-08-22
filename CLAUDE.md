@@ -89,10 +89,14 @@ then attaches listeners — there's no diffing, re-render is wholesale.
   sets `innerHTML` — including the error and empty states — must include both,
   or switching away from a failed load becomes impossible. (Closet's three
   subviews predate this and still thread `segmentedHtml` through as a param.)
-- **Care badge counts come from two places.** Each half sets its own count from
-  data it already loads; `renderCareView()` fetches only the count for the half
-  you are *not* on. Don't "simplify" that into one `Promise.all` — it
-  re-requests what the visible half is already fetching.
+- **The Care tab badge must survive being off-tab.** It is the only signal that
+  care is waiting when you are anywhere else, so every mutation that can move
+  either count calls `refreshCareBadge()` (`GET /care/summary`, counts only —
+  `/care/due` ships the whole item list and is far too heavy to poll). That's
+  wear logged, wear undone, wash, and the three care-log paths in the item care
+  modal, which is reachable from Closet as well as from Care. Add a new
+  mutation, add a refresh. The Care views instead call `updateCareTabBadge()`
+  directly, since they have just loaded the real numbers themselves.
 - **`makeSettingsCollapsible()` rewrites the settings DOM after `innerHTML`.**
   It moves everything after each `.settings-section-title` into a body div, so
   every section must keep the title as its first element child. Handlers attach

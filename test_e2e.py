@@ -876,6 +876,49 @@ async def start_local_test_server(port: int):
     return server, tmp_dir, f"http://127.0.0.1:{port}/index.html", f"http://127.0.0.1:{port}/test_image.jpg"
 
 
+async def test_n11_care_summary(client: httpx.AsyncClient):
+    """N11: /care/summary counts agree with the endpoints they summarize."""
+    log("N11: Care summary counts")
+
+    try:
+        summary = (await client.get(f"{API}/care/summary")).json()
+        for key in ("dirty", "due", "total"):
+            assert key in summary, f"summary missing {key}: {summary}"
+        assert summary["total"] == summary["dirty"] + summary["due"], summary
+
+        # The badge is only trustworthy if it matches the lists it stands for.
+        dirty = (await client.get(f"{API}/laundry/dirty")).json()
+        due = (await client.get(f"{API}/care/due")).json()
+        assert summary["dirty"] == len(dirty), (summary, len(dirty))
+        assert summary["due"] == due["count"], (summary, due["count"])
+
+        # Wear an item enough to dirty it, and the count must follow.
+        item = (await client.post(f"{API}/items", json={
+            "name": "Summary Test Tee", "category": "tops",
+        })).json()
+        before = (await client.get(f"{API}/care/summary")).json()["dirty"]
+        await client.put(f"{API}/settings", json={"dirty_thresholds": {"tops": 1}})
+        await client.post(f"{API}/wear", json={
+            "date": "2026-01-15",
+            "items": [{"item_id": item["id"], "dirty": True}],
+        })
+        after = (await client.get(f"{API}/care/summary")).json()
+        assert after["dirty"] == before + 1, (before, after)
+        assert after["dirty"] == len((await client.get(f"{API}/laundry/dirty")).json())
+
+        # Washing clears it again.
+        await client.post(f"{API}/laundry", json={"mode": "all"})
+        washed = (await client.get(f"{API}/care/summary")).json()
+        assert washed["dirty"] == 0, washed
+        assert washed["total"] == washed["due"], washed
+
+        pass_test("N11-care-summary")
+    except AssertionError as e:
+        fail_test("N11-care-summary", str(e))
+    except Exception as e:
+        fail_test("N11-care-summary", f"{type(e).__name__}: {e}")
+
+
 async def main():
     print("=" * 60)
     print("Wardrobe PWA End-to-End Test Suite")
@@ -933,6 +976,7 @@ async def main():
         await test_n8_api_paths(client)
         test_n9_seed_script()
         await test_n10_scents(client)
+        await test_n11_care_summary(client)
 
     # Stop server
     server.should_exit = True
