@@ -1,5 +1,5 @@
 // Wardrobe PWA Service Worker
-const CACHE_NAME = 'wardrobe-v17';
+const CACHE_NAME = 'wardrobe-v18';
 
 const STATIC_ASSETS = [
     '/',

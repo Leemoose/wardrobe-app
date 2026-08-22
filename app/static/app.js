@@ -40,6 +40,10 @@ const state = {
     aiStatus: null,    // cached GET /ai/status ({anthropic, openai, ...})
     closetSubview: 'closet',  // 'closet' | 'wishlist' | 'scents'
     careSubview: 'laundry',   // 'laundry' | 'maintenance'
+    careCounts: { dirty: null, due: null },  // segment badges; null = not loaded yet
+    // Titles of the expanded settings sections. Survives the re-render that
+    // some Save handlers trigger, so saving does not collapse what you're in.
+    settingsOpen: new Set(),
     wishlist: [],
     scents: [],
     scentFilters: {
@@ -3283,10 +3287,14 @@ async function openOutfitModal(outfit) {
 // the segmented control itself (rather than taking it as an argument) because
 // both re-render themselves wholesale from several places.
 function careSegmentHtml() {
+    // A count on the half you are not looking at is the only thing telling you
+    // it needs you — neither half is visible from the other, and Today shows
+    // nothing about either.
+    const badge = (n) => (n ? `<span class="segment-badge">${n}</span>` : '');
     return `
         <div class="segmented-control" id="care-segment">
-            <button class="segment-btn ${state.careSubview === 'laundry' ? 'active' : ''}" data-subview="laundry">Laundry</button>
-            <button class="segment-btn ${state.careSubview === 'maintenance' ? 'active' : ''}" data-subview="maintenance">Maintenance</button>
+            <button class="segment-btn ${state.careSubview === 'laundry' ? 'active' : ''}" data-subview="laundry">Laundry${badge(state.careCounts.dirty)}</button>
+            <button class="segment-btn ${state.careSubview === 'maintenance' ? 'active' : ''}" data-subview="maintenance">Maintenance${badge(state.careCounts.due)}</button>
         </div>
     `;
 }
@@ -3301,7 +3309,21 @@ function wireCareSegment(container) {
 }
 
 async function renderCareView(container) {
-    if (state.careSubview === 'maintenance') {
+    const onMaintenance = state.careSubview === 'maintenance';
+    // Each half sets its own badge count from data it already loads, so only
+    // the count for the half you are *not* on needs a request. Badges are
+    // decoration: a failure here leaves the previous count and renders anyway.
+    try {
+        if (onMaintenance) {
+            state.careCounts.dirty = (await api('/laundry/dirty')).length;
+        } else {
+            state.careCounts.due = (await api('/care/due')).count || 0;
+        }
+    } catch (err) {
+        /* keep whatever count we last had */
+    }
+
+    if (onMaintenance) {
         await renderMaintenanceView(container);
     } else {
         await renderLaundryView(container);
@@ -3314,6 +3336,7 @@ async function renderLaundryView(container) {
 
     try {
         state.dirtyItems = await api('/laundry/dirty');
+        state.careCounts.dirty = state.dirtyItems.length;
     } catch (err) {
         container.innerHTML = `${careSegmentHtml()}<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
         wireCareSegment(container);
@@ -4439,6 +4462,58 @@ async function openTripOutfitPicker(trip) {
 // SETTINGS VIEW
 // ========================================
 
+// Settings is twelve sections and roughly six phone screens of scrolling, and
+// most of it is set once and never touched again. Rather than restructure all
+// twelve blocks of markup, fold each one up after the fact: everything after
+// the section title moves into a body div the title toggles.
+//
+// Sections listed here stay open and un-collapsible — they're a link and a
+// pair of download buttons, not settings, and burying them behind a tap would
+// cost more than the scrolling it saves.
+const SETTINGS_ALWAYS_OPEN = ['Stats', 'Backup'];
+
+function makeSettingsCollapsible(container) {
+    container.querySelectorAll('.settings-section').forEach(section => {
+        const title = section.firstElementChild;
+        if (!title || !title.classList.contains('settings-section-title')) return;
+
+        const name = title.textContent.trim();
+        if (SETTINGS_ALWAYS_OPEN.includes(name)) return;
+
+        // Move the section's contents into a body element. Moving a node keeps
+        // its listeners and its id, so the handlers attached further down
+        // renderSettingsView() still find everything by getElementById.
+        const body = document.createElement('div');
+        body.className = 'settings-section-body';
+        while (title.nextSibling) body.appendChild(title.nextSibling);
+        section.appendChild(body);
+
+        const open = state.settingsOpen.has(name);
+        title.classList.add('collapsible');
+        title.classList.toggle('open', open);
+        body.classList.toggle('open', open);
+        title.setAttribute('role', 'button');
+        title.setAttribute('tabindex', '0');
+        title.setAttribute('aria-expanded', open ? 'true' : 'false');
+
+        const toggle = () => {
+            const nowOpen = !state.settingsOpen.has(name);
+            if (nowOpen) state.settingsOpen.add(name);
+            else state.settingsOpen.delete(name);
+            title.classList.toggle('open', nowOpen);
+            body.classList.toggle('open', nowOpen);
+            title.setAttribute('aria-expanded', nowOpen ? 'true' : 'false');
+        };
+        title.addEventListener('click', toggle);
+        title.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggle();
+            }
+        });
+    });
+}
+
 async function renderSettingsView(container) {
     container.innerHTML = '<div class="flex-center"><div class="spinner"></div></div>';
 
@@ -4693,6 +4768,8 @@ async function renderSettingsView(container) {
             <button class="btn btn-primary" id="save-temp-btn">Save Temp Bands</button>
         </div>
     `;
+
+    makeSettingsCollapsible(container);
 
     document.getElementById('open-stats-btn').addEventListener('click', () => {
         navigateTo('stats');
@@ -5135,6 +5212,7 @@ async function renderMaintenanceView(container) {
 
         const dueCount = dueData.count || 0;
         const dueItems = dueData.items || [];
+        state.careCounts.due = dueCount;
 
         let dueHtml = '';
         if (dueCount === 0) {

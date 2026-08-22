@@ -125,7 +125,16 @@ The bottom bar went from eight tabs to six. Nothing was removed; two things move
   per-brand breakdowns, gaps, wear calendar) and has a back link to Settings. The
   Settings tab stays highlighted while it's open.
 
-**Note:** v2.0 updates the service worker cache to `wardrobe-v17`; hard-refresh after upgrading.
+- **Counts on the Care segments** — Each half of the Care tab shows how many
+  items are waiting in the other one, so nothing goes unnoticed just because
+  it's behind a segment you aren't looking at.
+- **Settings folds up** — The twelve settings sections collapse to a list of
+  headings (about six phone screens of scrolling down to one). Tap a heading to
+  open it; it stays open while you work, including across a Save. Stats and
+  Backup stay open, since they're a link and two download buttons rather than
+  settings.
+
+**Note:** v2.0 updates the service worker cache to `wardrobe-v18`; hard-refresh after upgrading.
 
 ---
 

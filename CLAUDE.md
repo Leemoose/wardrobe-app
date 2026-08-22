@@ -89,6 +89,16 @@ then attaches listeners — there's no diffing, re-render is wholesale.
   sets `innerHTML` — including the error and empty states — must include both,
   or switching away from a failed load becomes impossible. (Closet's three
   subviews predate this and still thread `segmentedHtml` through as a param.)
+- **Care badge counts come from two places.** Each half sets its own count from
+  data it already loads; `renderCareView()` fetches only the count for the half
+  you are *not* on. Don't "simplify" that into one `Promise.all` — it
+  re-requests what the visible half is already fetching.
+- **`makeSettingsCollapsible()` rewrites the settings DOM after `innerHTML`.**
+  It moves everything after each `.settings-section-title` into a body div, so
+  every section must keep the title as its first element child. Handlers attach
+  afterwards and still work because moving a node keeps its id and listeners.
+  Open sections live in `state.settingsOpen` (by title text) so the re-render
+  that some Save handlers trigger doesn't collapse the section you're in.
 
 - `api(path, {method, body})` prefixes `/api` and throws on non-2xx.
 - `openModal(html, full)` / `closeModal()`; `toast(msg, 'error')` for feedback.
