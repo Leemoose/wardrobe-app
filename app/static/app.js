@@ -39,6 +39,7 @@ const state = {
     aiEngine: 'auto',  // 'auto' | 'anthropic' | 'openai' | 'local'
     aiStatus: null,    // cached GET /ai/status ({anthropic, openai, ...})
     closetSubview: 'closet',  // 'closet' | 'wishlist' | 'scents'
+    careSubview: 'laundry',   // 'laundry' | 'maintenance'
     wishlist: [],
     scents: [],
     scentFilters: {
@@ -264,8 +265,11 @@ function navigateTo(tab) {
 }
 
 function updateActiveTab() {
+    // Stats lives under Settings and has no button of its own; light up the
+    // tab it was opened from so the bar never reads as "nothing selected".
+    const active = state.currentTab === 'stats' ? 'settings' : state.currentTab;
     document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === state.currentTab);
+        btn.classList.toggle('active', btn.dataset.tab === active);
     });
 }
 
@@ -282,17 +286,15 @@ function renderCurrentView() {
         case 'outfits':
             renderOutfitsView(main);
             break;
-        case 'laundry':
-            renderLaundryView(main);
-            break;
-        case 'stats':
-            renderStatsView(main);
-            break;
         case 'trips':
             renderTripsView(main);
             break;
         case 'care':
             renderCareView(main);
+            break;
+        // No tab button of its own — reached from Settings.
+        case 'stats':
+            renderStatsView(main);
             break;
         case 'settings':
             renderSettingsView(main);
@@ -3277,23 +3279,56 @@ async function openOutfitModal(outfit) {
 // LAUNDRY VIEW
 // ========================================
 
+// Laundry and Maintenance are two halves of one Care tab. Each half renders
+// the segmented control itself (rather than taking it as an argument) because
+// both re-render themselves wholesale from several places.
+function careSegmentHtml() {
+    return `
+        <div class="segmented-control" id="care-segment">
+            <button class="segment-btn ${state.careSubview === 'laundry' ? 'active' : ''}" data-subview="laundry">Laundry</button>
+            <button class="segment-btn ${state.careSubview === 'maintenance' ? 'active' : ''}" data-subview="maintenance">Maintenance</button>
+        </div>
+    `;
+}
+
+function wireCareSegment(container) {
+    container.querySelector('#care-segment')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.segment-btn');
+        if (!btn) return;
+        state.careSubview = btn.dataset.subview;
+        renderCareView(container);
+    });
+}
+
+async function renderCareView(container) {
+    if (state.careSubview === 'maintenance') {
+        await renderMaintenanceView(container);
+    } else {
+        await renderLaundryView(container);
+    }
+}
+
 async function renderLaundryView(container) {
-    container.innerHTML = '<div class="flex-center"><div class="spinner"></div></div>';
+    container.innerHTML = `${careSegmentHtml()}<div class="flex-center"><div class="spinner"></div></div>`;
+    wireCareSegment(container);
 
     try {
         state.dirtyItems = await api('/laundry/dirty');
     } catch (err) {
-        container.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
+        container.innerHTML = `${careSegmentHtml()}<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
+        wireCareSegment(container);
         return;
     }
 
     if (state.dirtyItems.length === 0) {
         container.innerHTML = `
+            ${careSegmentHtml()}
             <div class="empty-state">
                 <div class="empty-state-icon">&#127881;</div>
                 <div class="empty-state-text">No dirty laundry</div>
             </div>
         `;
+        wireCareSegment(container);
         return;
     }
 
@@ -3309,6 +3344,7 @@ async function renderLaundryView(container) {
     `).join('');
 
     container.innerHTML = `
+        ${careSegmentHtml()}
         <div class="laundry-actions">
             ${state.laundrySelectMode ? `
                 <button class="btn btn-secondary" id="cancel-select-btn">Cancel</button>
@@ -3322,6 +3358,8 @@ async function renderLaundryView(container) {
         </div>
         <div id="laundry-list">${itemsHtml}</div>
     `;
+
+    wireCareSegment(container);
 
     // Select mode toggle
     document.getElementById('select-mode-btn')?.addEventListener('click', () => {
@@ -3394,7 +3432,11 @@ async function renderStatsView(container) {
             api(`/wear/history?year=${state.calendarYear}&month=${state.calendarMonth + 1}`)
         ]);
     } catch (err) {
-        container.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
+        container.innerHTML = `
+            <button class="btn btn-secondary btn-sm" id="back-to-settings-btn">← Back to settings</button>
+            <div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>
+        `;
+        document.getElementById('back-to-settings-btn').addEventListener('click', () => navigateTo('settings'));
         return;
     }
 
@@ -3430,6 +3472,7 @@ async function renderStatsView(container) {
     const calendarHtml = renderCalendar();
 
     container.innerHTML = `
+        <button class="btn btn-secondary btn-sm" id="back-to-settings-btn">← Back to settings</button>
         <div class="stats-totals">
             <div class="stat-item">
                 <div class="stat-value">${totals.items}</div>
@@ -3466,6 +3509,10 @@ async function renderStatsView(container) {
             ${calendarHtml}
         </div>
     `;
+
+    document.getElementById('back-to-settings-btn').addEventListener('click', () => {
+        navigateTo('settings');
+    });
 
     // Calendar navigation
     document.getElementById('cal-prev').addEventListener('click', () => {
@@ -4464,6 +4511,12 @@ async function renderSettingsView(container) {
 
     container.innerHTML = `
         <div class="settings-section">
+            <div class="settings-section-title">Stats</div>
+            <button class="btn btn-outline btn-block" id="open-stats-btn">Open Stats</button>
+            <p class="settings-note">Wear counts, cost per wear, wardrobe gaps and the wear calendar.</p>
+        </div>
+
+        <div class="settings-section">
             <div class="settings-section-title">Suggestions</div>
             <div class="form-group">
                 <label class="form-label">No Repeat Days</label>
@@ -4640,6 +4693,10 @@ async function renderSettingsView(container) {
             <button class="btn btn-primary" id="save-temp-btn">Save Temp Bands</button>
         </div>
     `;
+
+    document.getElementById('open-stats-btn').addEventListener('click', () => {
+        navigateTo('stats');
+    });
 
     // Save suggestions settings (no_repeat_days)
     document.getElementById('save-suggestions-btn').addEventListener('click', async () => {
@@ -5063,8 +5120,9 @@ async function loadActiveTrip(force = false) {
 // CARE / MAINTENANCE VIEW
 // ========================================
 
-async function renderCareView(container) {
-    container.innerHTML = '<div class="flex-center"><div class="spinner"></div></div>';
+async function renderMaintenanceView(container) {
+    container.innerHTML = `${careSegmentHtml()}<div class="flex-center"><div class="spinner"></div></div>`;
+    wireCareSegment(container);
 
     try {
         const [, dueData, guides, suppliesData, seasonalData] = await Promise.all([
@@ -5190,7 +5248,7 @@ async function renderCareView(container) {
         `;
 
         container.innerHTML = `
-            <h2 style="font-size: 24px; font-weight: 600; margin-bottom: var(--space-md);">Maintenance & Care</h2>
+            ${careSegmentHtml()}
             ${seasonalHtml}
             <div class="card">
                 <div class="card-header">
@@ -5205,6 +5263,8 @@ async function renderCareView(container) {
                 ${guidesHtml}
             </div>
         `;
+
+        wireCareSegment(container);
 
         // Seasonal banner expand/collapse
         document.getElementById('seasonal-toggle')?.addEventListener('click', () => {
@@ -5245,7 +5305,7 @@ async function renderCareView(container) {
                         body: { task, date: localToday() }
                     });
                     toast('Care task logged!');
-                    renderCareView(container);
+                    renderMaintenanceView(container);
                 } catch (err) {
                     toast(err.message, 'error');
                 }
@@ -5269,7 +5329,8 @@ async function renderCareView(container) {
         });
 
     } catch (err) {
-        container.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
+        container.innerHTML = `${careSegmentHtml()}<div class="empty-state"><div class="empty-state-text">Error: ${escapeHtml(err.message)}</div></div>`;
+        wireCareSegment(container);
     }
 }
 

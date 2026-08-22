@@ -78,6 +78,18 @@ One global `state` object; `renderCurrentView()` switches on `state.currentTab`.
 Each view is `async function renderXView(container)` that sets `innerHTML` and
 then attaches listeners — there's no diffing, re-render is wholesale.
 
+- **Not every view is a tab.** `stats` is a valid `currentTab` with no button in
+  the bar — Settings links to it and it links back. `updateActiveTab()` maps it
+  onto Settings so the bar is never blank.
+- **The Care tab is two views behind a segmented control** (`state.careSubview`):
+  `renderCareView()` dispatches to `renderLaundryView()` or
+  `renderMaintenanceView()`. Because both re-render themselves from several
+  places, each builds the control itself via `careSegmentHtml()` /
+  `wireCareSegment()` rather than receiving it as an argument. Every branch that
+  sets `innerHTML` — including the error and empty states — must include both,
+  or switching away from a failed load becomes impossible. (Closet's three
+  subviews predate this and still thread `segmentedHtml` through as a param.)
+
 - `api(path, {method, body})` prefixes `/api` and throws on non-2xx.
 - `openModal(html, full)` / `closeModal()`; `toast(msg, 'error')` for feedback.
 - **`escapeHtml()` every interpolated value.** All markup is built with template

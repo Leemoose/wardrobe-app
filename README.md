@@ -18,9 +18,9 @@ A self-hosted, single-user wardrobe manager you run on your home NAS with Docker
 - **No-repeat window** — Suggestions hide outfits worn in the last N days (Settings > Suggestions, `no_repeat_days`; 0 disables); "Show anyway" override on Today tab via `include_recent` parameter
 - **Weather-aware warnings** — When live weather is available, suggestions show warnings: rain risk for items with suede/leather in name or care notes, cold-without-layer, warm-with-outerwear; thresholds and sensitive-materials list editable in Settings > Weather rules (`rain_precip_threshold`, `outerwear_below_f`, `no_outerwear_above_f`, `sensitive_materials`); weather failure degrades gracefully (no warnings, suggestions still work)
 - **Item lifecycle** — Items can be Active, Stored, or Retired; stored and retired items are excluded from suggestions, outfit generation, laundry list, and outfit availability, but history and stats are preserved; filter chips in Closet
-- **Undo wear** — Calendar day detail in Stats: undo reverses wear counters, wears-since-wash, and dirty marks
+- **Undo wear** — Calendar day detail in Stats (Settings → Stats): undo reverses wear counters, wears-since-wash, and dirty marks
 - **Backup & export** — Settings > Backup: full `.zip` (consistent SQLite snapshot via `sqlite3.backup()` + photos + JSON export) and standalone JSON export; recommended before container updates
-- **Wardrobe analysis** — Stats tab: total value (active items), best/worst cost-per-wear, per-category and per-brand breakdowns (top 8 brands by count), category x season coverage gaps, bottleneck items (appearing in 2+ outfits)
+- **Wardrobe analysis** — Stats (Settings → Stats): total value (active items), best/worst cost-per-wear, per-category and per-brand breakdowns (top 8 brands by count), category x season coverage gaps, bottleneck items (appearing in 2+ outfits)
 - **Auto-migration** — Existing databases migrate automatically on startup (lifecycle column added if missing)
 
 ### v1.2 Additions
@@ -76,8 +76,8 @@ A self-hosted, single-user wardrobe manager you run on your home NAS with Docker
 **Caring for nice clothes**
 
 - **Repair & alteration log** — Care history entries now have a kind (repair, alteration, professional service, routine care) and a cost; each item shows its total spent on care, so you'll know when those shoes were last resoled and what your tailor has cost you
-- **Care Kit** — The Care tab aggregates the supplies lists from every guide matching items you actually own into one checklist with owned/needed state
-- **Seasonal storage assistant** — In spring (Mar–May) the Care tab prompts you to store still-active cold-weather items with a proper storage checklist (clean first, cedar, breathable bags); in fall (Sep–Nov) it prompts you to bring stored items back out
+- **Care Kit** — Care → Maintenance aggregates the supplies lists from every guide matching items you actually own into one checklist with owned/needed state
+- **Seasonal storage assistant** — In spring (Mar–May) Care → Maintenance prompts you to store still-active cold-weather items with a proper storage checklist (clean first, cedar, breathable bags); in fall (Sep–Nov) it prompts you to bring stored items back out
 
 **Local AI**
 
@@ -110,6 +110,22 @@ Scents and their journals are included in JSON and ZIP backups — the written n
 exist nowhere else, so back up as usual.
 
 **Note:** v1.9 updates the service worker cache to `wardrobe-v15`; hard-refresh after upgrading.
+
+### v2.0 Additions — Slimmer Tab Bar
+
+The bottom bar went from eight tabs to six. Nothing was removed; two things moved.
+
+- **Laundry and Care are one tab** — The **Care** tab now has a Laundry / Maintenance
+  segmented control at the top, the same pattern as Closet → Wishlist → Scents. It
+  opens on Laundry, since that's the day-to-day half. Maintenance holds everything
+  the old Care tab had: Needs Attention, the Care Kit checklist, the seasonal storage
+  banner, and the care guides.
+- **Stats moved into Settings** — Open it with **Settings → Stats → Open Stats**. The
+  view itself is unchanged (totals, value and cost-per-wear, per-category and
+  per-brand breakdowns, gaps, wear calendar) and has a back link to Settings. The
+  Settings tab stays highlighted while it's open.
+
+**Note:** v2.0 updates the service worker cache to `wardrobe-v17`; hard-refresh after upgrading.
 
 ---
 
