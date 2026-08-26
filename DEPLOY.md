@@ -1,6 +1,6 @@
 # Deployment
 
-The app runs on the home server (`192.168.0.58`, Tailscale `100.79.52.22`) in Docker,
+The app runs on the home server (`10.0.0.185`, Tailscale `100.79.52.22`) in Docker,
 and redeploys itself when `main` moves.
 
 ## Access
@@ -8,7 +8,7 @@ and redeploys itself when `main` moves.
 | | |
 |---|---|
 | **Preferred** (real TLS, from anywhere on the tailnet) | https://leemooseserver.tail3795d8.ts.net:9443 |
-| LAN, no Tailscale needed | http://192.168.0.58:8321 |
+| LAN, no Tailscale needed | http://10.0.0.185:8321 |
 
 The HTTPS address is served by `tailscale serve` with a genuine Let's Encrypt
 certificate. Prefer it — Safari upgrades bare `http://` addresses to `https://`,
@@ -48,7 +48,7 @@ them. **Nothing in `data/` is backed up by git** — it exists only on the serve
 Back it up separately:
 
 ```bash
-scp leemoose@192.168.0.58:~/apps/wardrobe/data/wardrobe.db ./wardrobe-backup.db
+scp leemoose@10.0.0.185:~/apps/wardrobe/data/wardrobe.db ./wardrobe-backup.db
 ```
 
 ## Access to the private repo
